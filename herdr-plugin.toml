@@ -1,0 +1,30 @@
+id = "herdr-plugins.project-orchestration"
+name = "Project Orchestration"
+version = "0.5.0"
+min_herdr_version = "0.7.5"
+description = "Multi-agent project orchestration — coordinate workers, a librarian, and a researcher across a Jira epic using the project CLI."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["bash", "scripts/setup.sh"]
+
+[[actions]]
+id = "init"
+title = "Initialize a project"
+description = "Create a new project state file and set HERDR_PROJECT for this workspace."
+contexts = ["pane", "workspace"]
+command = ["bash", "-c", "read -p 'Project name: ' name; read -p 'Workspace ID (optional): ' ws; eval \"$(project init \"$name\" \"$ws\")\""]
+
+[[actions]]
+id = "status"
+title = "Show project status"
+description = "Show agent states for all registered roles in the current project."
+contexts = ["pane", "workspace"]
+command = ["bash", "-c", "project status"]
+
+[[actions]]
+id = "roster"
+title = "Show project roster"
+description = "Print the current role-to-pane-ID map for the project."
+contexts = ["pane", "workspace"]
+command = ["bash", "-c", "project roster"]
