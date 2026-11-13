@@ -15,6 +15,7 @@ skills/
   start-project/SKILL.md    # Orchestrator skill
   start-project/DESIGN.md   # System design (role boundaries, constraints, known gaps)
   start-project/librarian.md # Librarian role definition (read by agents, not a skill)
+  start-project/watcher.md   # Watcher role definition (CI monitor, read by agents, not a skill)
   start-project/researcher.md # Researcher role definition (read by agents, not a skill)
   project-worker/SKILL.md   # Worker skill
   dry-run-project/SKILL.md  # Signal protocol test harness
@@ -45,6 +46,12 @@ When the user asks you to message a running agent (e.g. "ask pane wF:p4W about X
 ## Upstream dependencies
 
 - [herdrdev/herdr-core#259](https://github.com/herdrdev/herdr-core/issues/259) — plugin subcommand registration. Would let us drop the `~/.local/bin/project` symlink in favor of `herdr project <args>`.
+
+## Signal economy
+
+Minimize inter-agent chatter. Every signal burns tokens in both the sender's and receiver's context. Design signal flows so each event has **one routing point** — don't fan out the same information to multiple agents when one can relay a compact summary. The librarian is the routing point for worker lifecycle signals; the orchestrator gets only what it needs to act.
+
+When refining skills, watch for duplicate signals (same event sent to multiple agents) and ask: can one agent relay a summary instead?
 
 ## Content guidelines
 

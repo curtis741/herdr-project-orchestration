@@ -22,7 +22,7 @@ The orchestrator never writes code. Workers never manage other workers. The libr
 2. Presents the work plan (waves, sequential chains, repo mapping) for confirmation
 3. Spawns the librarian on main (no worktree — reads merged code only)
 4. Spawns wave 1 workers via `herdr worktree create` (one worktree per ticket, max 3 concurrent)
-5. Workers implement, test, push, open draft PRs, signal `DONE`
+5. Workers implement, test, push, open draft PRs, signal `PR_OPEN` to the librarian
 6. After a PR is merged, orchestrator tells the librarian to ingest the diff
 7. Orchestrator checks which wave 2+ tickets are unblocked, spawns workers for them
 8. Wave 2+ workers can `project ask librarian "..."` to ask about earlier work
@@ -34,6 +34,7 @@ Orchestrator (any session — creates and manages the workspace)
   │
   └── Epic Workspace (one Herdr workspace)
         ├── Librarian tab (repo root, stays on main)
+        ├── Watcher tab (repo root, stays on main)
         ├── Researcher tab (optional, repo root)
         ├── Worker alpha tab (repo root, cds into .worktrees/<ticket-a>/)
         ├── Worker bravo tab (repo root, cds into .worktrees/<ticket-b>/)
@@ -46,7 +47,7 @@ Workers start scoped to the repo root (shared memory, session list) and `cd` int
 
 Two commands via the `project` CLI, which resolves roles to pane IDs from a shared state file. No agent names to hallucinate, no `herdr agent list` to parse.
 
-- **`project prompt`** — fire a signal, don't need the reply (STARTING, DONE, BLOCKED, SCOPE, assignments, merge notifications)
+- **`project prompt`** — fire a signal, don't need the reply (STARTING, PR_OPEN, DONE, BLOCKED, SCOPE, assignments, merge notifications)
 - **`project ask`** — send a question, wait for the agent to finish, print its pane output to stdout so the caller gets the answer in context
 
 ### Signal protocol
@@ -55,9 +56,13 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 |--------|-----------|---------|
 | `READY` | Worker → Orchestrator | Worker booted, waiting for assignment |
 | `STARTING` | Worker → Librarian | Triggers Jira transition to In Progress |
-| `DONE` | Worker → Librarian + Orchestrator | PR opened, triggers Code Review transition and wave check |
+| `PR_OPEN` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
+| `DONE` | Worker → Librarian | Post-merge verification complete (optional); librarian transitions to Done, relays to orchestrator |
 | `BLOCKED` | Worker → Orchestrator | Escalates to user |
 | `UNBLOCKED` | Librarian → Orchestrator | Dependency cleared, ready for next worker |
+| `WATCH` | Librarian → Watcher | Start monitoring CI on a PR, report failures to the worker |
+| `CI GREEN` | Watcher → Librarian | PR passed CI |
+| `CI FAILED` | Watcher → Worker | CI failure with structured details |
 | `SCOPE` | Worker → Orchestrator | Found work outside ticket scope |
 
 ## Responsibility boundaries
@@ -71,6 +76,7 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 | DAG monitoring, auto-unblock detection | Librarian | Sees merged signals, checks dependency graph, signals orchestrator |
 | PR/ticket status queries | Librarian | Tracks all state; orchestrator asks rather than querying GitHub |
 | Research findings (traffic, data shape, dependencies) | Librarian | Stores findings alongside merged diffs so workers can query both |
+| CI monitoring, failure reporting | Watcher | Polls CI, reports failures directly to workers, reports green to librarian |
 | Scope gap tickets | Researcher | Creates Jira tickets, reports to librarian + orchestrator |
 | Out-of-scope work flagging | Researcher | Flags to orchestrator immediately, doesn't solve |
 
@@ -79,8 +85,9 @@ The librarian manages the full Jira lifecycle via signals from workers and the o
 | Signal | From | Librarian transitions to |
 |--------|------|--------------------------|
 | `STARTING — APP-XXXX` | Worker | In Progress |
-| `DONE — PR #N for APP-XXXX` | Worker | In Code Review |
-| `PR #N merged for APP-XXXX` | Orchestrator | Acceptance Test / Done |
+| `PR_OPEN — PR #N for APP-XXXX` | Worker | In Code Review |
+| `DONE — APP-XXXX verified` | Worker | Done (post-merge verification) |
+| `PR #N merged for APP-XXXX` | Orchestrator | Acceptance Test or Done |
 | Research complete | Research agent | Closes spike ticket |
 
 ## Primitives

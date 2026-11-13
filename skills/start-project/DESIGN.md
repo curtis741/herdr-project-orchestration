@@ -18,13 +18,20 @@ Three skills, global (`~/.claude/skills/`):
 Epic Workspace (one Herdr workspace, all roles as tabs)
   ├── Orchestrator tab (repo root)
   ├── Librarian tab (repo root, stays on main)
+  ├── Watcher tab (repo root, stays on main)
   ├── Researcher tab (repo root, stays on main, optional)
   ├── Worker A tab (repo root, cds into .worktrees/<ticket-a>/)
   ├── Worker B tab (repo root, cds into .worktrees/<ticket-b>/)
   └── Worker C tab (repo root, cds into .worktrees/<ticket-c>/)
 
-Workers ──STARTING/DONE──> Librarian (Jira transitions)
-Workers ──DONE/BLOCKED/SCOPE──> Orchestrator (wave advancement)
+Workers ──STARTING/PR_OPEN──> Librarian (Jira transitions + operational notes)
+Workers ──DONE──> Librarian (post-merge verification only)
+Librarian ──PR_OPEN relay──> Orchestrator (compact: PR#, ticket, test brief)
+Librarian ──DONE relay──> Orchestrator (post-merge verification complete)
+Librarian ──WATCH──> Watcher (PR# + worker role to report to)
+Watcher ──CI failures──> Worker (direct, structured failure reports)
+Watcher ──CI GREEN──> Librarian (PR passed CI)
+Workers ──BLOCKED/SCOPE──> Orchestrator (escalation)
 Workers ──domain questions──> Librarian or Researcher
 Orchestrator ──"PR merged, ingest"──> Librarian
 Librarian ──"UNBLOCKED — APP-XXXX"──> Orchestrator (auto-detects cleared deps)
@@ -45,7 +52,7 @@ Two commands via the `project` CLI (`~/.local/bin/project`), which resolves role
 
 Examples:
 
-- **Worker → Orchestrator:** `project prompt orchestrator "DONE — PR #N opened for APP-XXXX"`
+- **Worker → Librarian:** `project prompt librarian "PR_OPEN — PR #N for APP-XXXX. <operational notes>"`
 - **Worker → Orchestrator:** `project prompt orchestrator "BLOCKED — <reason>"`
 - **Orchestrator → Librarian:** `project prompt librarian "APP-XXXX PR #N was just merged. Ingest the diff."`
 - **Worker → Librarian (needs answer):** `project ask librarian "What interfaces did APP-YYYY introduce?"`
@@ -63,6 +70,7 @@ Examples:
 | DAG monitoring, auto-unblock detection | Librarian | Sees merged signals, checks dependency graph, signals orchestrator |
 | PR/ticket status queries | Librarian | Tracks all state; orchestrator asks rather than querying GitHub |
 | Research findings (traffic, data shape, dependencies) | Librarian | Stores findings alongside merged diffs so workers can query both |
+| CI monitoring, failure reporting | Watcher | Polls CI, reports failures directly to workers, reports green to librarian |
 | Scope gap tickets | Researcher | Creates Jira tickets, reports to librarian + orchestrator |
 | Out-of-scope work flagging | Researcher | Flags to orchestrator immediately, doesn't solve |
 
@@ -71,8 +79,9 @@ The librarian manages the full Jira lifecycle via signals from workers and the o
 | Signal | From | Librarian transitions to |
 |--------|------|--------------------------|
 | `STARTING — APP-XXXX` | Worker | In Progress |
-| `DONE — PR #N for APP-XXXX` | Worker | In Code Review |
-| `PR #N merged for APP-XXXX` | Orchestrator | Acceptance Test / Done |
+| `PR_OPEN — PR #N for APP-XXXX` | Worker | In Code Review |
+| `DONE — APP-XXXX verified` | Worker | Done (post-merge verification) |
+| `PR #N merged for APP-XXXX` | Orchestrator | Acceptance Test or Done |
 | Research complete | Research agent | Closes spike ticket |
 
 This keeps ticket management off the orchestrator (stays lightweight) and off workers (stay focused on code).
@@ -160,7 +169,8 @@ The tester is an optional fourth role, spawned by the orchestrator when a worker
 
 Interaction model:
 ```
-Worker ──DONE + test brief──> Orchestrator
+Worker ──PR_OPEN + test brief──> Librarian
+Librarian ──PR_OPEN relay + test brief──> Orchestrator
 Orchestrator ──spawns──> Tester (fresh context, no implementation knowledge)
 Tester ──findings──> Orchestrator
 Orchestrator ──"fix these"──> Worker
@@ -190,9 +200,10 @@ The orchestrator's reboot-recovery procedure is in `start-project/SKILL.md` § R
 
 ## Constraints
 
+- **Signal economy** — every signal burns tokens in both sender and receiver. Route lifecycle events through one agent (the librarian) rather than fanning out. The orchestrator gets compact relays, not raw detail.
 - Max 3 concurrent workers
 - Workers don't spawn sub-agents — escalate to orchestrator
-- Librarian and researcher are long-lived and on-demand — prompt when there's work, don't keep polling. Both stay up for the life of the epic; idle is their correct steady state between queries, not a signal to shut down
+- Librarian, watcher, and researcher are long-lived — all stay up for the life of the epic. Librarian and researcher are on-demand (idle is their correct steady state). The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
 - Librarian ingests merged PRs and research findings
 - All PRs opened as drafts
 - Never force-push

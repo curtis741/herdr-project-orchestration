@@ -32,7 +32,7 @@ An independent agent with fresh context that tests an endpoint after a worker fi
 
 All communication goes through the `project` CLI:
 
-- **`project prompt <role> <message>`** — fire-and-forget signal (STARTING, DONE, BLOCKED, UNBLOCKED)
+- **`project prompt <role> <message>`** — fire-and-forget signal (STARTING, PR_OPEN, DONE, BLOCKED, UNBLOCKED)
 - **`project ask <role> <question>`** — blocking question, prints the reply to stdout
 - **`project research <question>`** — async domain question routed to the researcher
 
@@ -63,4 +63,4 @@ plugin_dir=$(dirname "$(readlink ~/.claude/skills/PROJECT_GUIDE.md)")
 # $plugin_dir/skills/dry-run-project/SKILL.md
 ```
 
-Read that file and follow it step by step. It spawns a librarian and two fake workers in a test workspace, walks through the full signal cycle (READY → STARTING → DONE → unblock → second worker), and scores which signals landed.
+Read that file and follow it step by step. It spawns a librarian, watcher, and two fake workers in a test workspace, walks through the full signal cycle (READY → STARTING → PR_OPEN → unblock → second worker), and scores which signals landed.

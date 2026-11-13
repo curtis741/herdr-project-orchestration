@@ -133,6 +133,38 @@ Dependency DAG:
 Your role is defined in ~/.claude/skills/start-project/librarian.md — read it now and follow it." --wait --timeout 120000
 ```
 
+### Spawn watcher
+
+The watcher monitors CI on all worker PRs and reports failures directly to workers. Spawn it alongside the librarian — it's long-lived, one per epic.
+
+```bash
+herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "watcher" --env HERDR_PROJECT=<project-name> --no-focus
+herdr agent start watcher --kind claude --pane <pane_id>
+```
+
+Boot the watcher:
+
+```bash
+herdr agent prompt <pane_id> "<epic-summary> — watcher.
+
+All agents use 'project prompt <role> <message>' to communicate. Your role is 'watcher'.
+
+Boot sequence:
+1. Run: project register watcher
+2. Wait for your assignment." --wait --timeout 60000
+```
+
+When the watcher reports READY, send its role payload:
+
+```bash
+project prompt watcher "Your assignment:
+
+Epic: APP-XXXX
+Repo: <owner/repo>
+
+Your role is defined in ~/.claude/skills/start-project/watcher.md — read it now and follow it." --wait --timeout 60000
+```
+
 ### Spawn researcher (if needed)
 
 If the epic has open discovery questions (noted in the description, spike comments, or your own judgment), spawn a long-lived researcher alongside wave 1. Skip this if the epic is well-understood.
@@ -241,13 +273,15 @@ Workers message you directly when they finish, hit a blocker, or find scope cree
 project status
 ```
 
-When a worker signals `DONE` (or reaches `idle`):
+When the librarian relays a `PR_OPEN` signal for a worker (or the worker reaches `idle`):
 
-1. Read its final output: `herdr agent read <pane_id> --source recent-unwrapped --lines 40`
-2. Verify a draft PR was opened (check via GitHub MCP)
-3. Notify the user: `[start-project] APP-1001 complete — PR #XXXX opened`
-   (The librarian handles the Jira transition — the worker's DONE signal triggers it.)
-4. **If the worker included a test brief** (API or parity migration work), spawn a tester — see Step 5a
+1. Verify a draft PR was opened (check via GitHub MCP)
+2. Notify the user: `[start-project] APP-1001 — PR #XXXX opened`
+3. **If the librarian's relay includes a test brief** (API or parity migration work), spawn a tester — see Step 5a
+
+The watcher handles CI monitoring — the librarian already told it to watch the PR. You don't need to manage CI checks.
+
+When the librarian relays a `DONE` signal (post-merge verification complete), notify the user: `[start-project] APP-1001 verified in production — done.`
 
 ## Step 5a: Spawn tester (API / parity work only)
 

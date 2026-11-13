@@ -11,7 +11,6 @@ Key decisions with reasoning, open questions, and the feedback log from real epi
 - **Researcher is long-lived, one per epic** — accumulates domain knowledge (data schemas, traffic patterns, external API details). Workers and the orchestrator ask it questions. Don't spin up throwaway research agents — the accumulated context is the value.
 - **Workers implement, researcher investigates** — when the orchestrator needs context from a worker's domain, ask the worker for a brief summary, then hand it to the researcher. Don't send workers off to investigate data schemas.
 - **Max 3 concurrent workers** — starting guess, tunable.
-- **Sequential chains** — same worker session for 2-3 tickets (reuses context), fresh worker for longer chains (avoids bloat).
 - **Cross-repo** — orchestrator maps tickets to repos by Jira labels/components. Most land in the primary repo, some in `frontend/`, `pipelines/`, etc.
 - **One workspace per epic** — all roles (orchestrator, librarian, researcher, workers) are tabs in a single Herdr workspace. Workers use git worktrees inside the repo dir (`.worktrees/<ticket>/`) for branch isolation, but their Claude sessions start scoped to the repo root for shared memory and session visibility.
 - **Worker reuse is librarian-advised** — the librarian proactively recommends reuse or fresh worker in its UNBLOCKED signal, based on the coupling between tickets. Reuse when the next ticket builds on internals; fresh when it only needs the interface. No hardcoded chain-length rule.
@@ -19,6 +18,9 @@ Key decisions with reasoning, open questions, and the feedback log from real epi
 - **Researcher cannot spawn workers** — when the researcher finds a small fix, it flags to the orchestrator, which decides how to handle it. Accepted trade-off: latency over role confusion.
 - **Tester agent** — an independent tester with fresh context catches bugs the implementer misses (no implementation assumptions). Spawned by the orchestrator when a worker's DONE signal includes a test brief. Ephemeral — one per API ticket.
 - **DAG ownership is shared** — orchestrator builds the initial DAG from Jira. Librarian monitors it alongside PR summaries and auto-detects unblocked tickets when dependencies merge. Librarian signals; orchestrator acts.
+- **PR_OPEN / DONE signal split** — `PR_OPEN` means "implementation complete, PR is up" (transitions to In Code Review). `DONE` is optional, only for post-merge verification work (data migration verified, production checks passed — transitions to Done). Most tickets only send `PR_OPEN`.
+- **Lifecycle signals flow through the librarian** — workers send `PR_OPEN` and `DONE` to the librarian only. The librarian transitions Jira, stores operational notes, routes to the watcher (CI monitoring) and orchestrator (wave advancement). One routing point, one signal path. Reduces duplicate token burn from workers fanning out the same event to multiple agents.
+- **Watcher agent** — long-lived CI monitor, one per epic. Receives watch assignments from the librarian, polls CI status, reports failures directly to workers, reports green to the librarian. Doesn't fix code, doesn't mark PRs ready, doesn't talk to the orchestrator. Context stays lean because it only reads CI output, not implementation code.
 
 ## Open questions
 
