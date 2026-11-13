@@ -1,11 +1,11 @@
 ---
 name: dry-run-project
-description: "Dry-run the project orchestration signal protocol without Jira, code changes, or PRs. Spawns a librarian, watcher, and two workers in a test workspace, walks through the full signal cycle (READY → STARTING → PR_OPEN → unblock → second worker), and reports which signals landed and which didn't. Use when refining project-orchestration skills. Requires Herdr."
+description: "Dry-run the project orchestration signal protocol without a tracker, code changes, or PRs. Spawns a librarian, watcher, and two workers in a test workspace, walks through the full signal cycle (READY → STARTING → PR_OPEN → unblock → second worker), and reports which signals landed and which didn't. Use when refining project-orchestration skills. Requires Herdr."
 ---
 
 # dry-run-project — Signal Protocol Test
 
-Tests the messaging choreography between orchestrator, librarian, watcher, and workers. No Jira, no code changes, no worktrees, no PRs — pure signals.
+Tests the messaging choreography between orchestrator, librarian, watcher, and workers. No tracker, no code changes, no worktrees, no PRs — pure signals.
 
 ## Prerequisites
 
@@ -52,7 +52,7 @@ project register librarian <pane_id>
 Boot prompt — tell it this is a dry run with a canned DAG:
 
 ```bash
-herdr agent prompt <pane_id> "DRY RUN — You are the project librarian for a signal protocol test. No real Jira, no real code.
+herdr agent prompt <pane_id> "DRY RUN — You are the project librarian for a signal protocol test. No real tracker, no real code.
 
 Your job: receive signals, confirm you got them, and check the DAG for unblocks.
 
@@ -272,7 +272,7 @@ herdr workspace close <workspace-id>
 ## What this does NOT test
 
 - Worktree creation/cleanup
-- Jira transitions
+- Ticket transitions
 - Actual code implementation
 - PR opening
 - Sequential chain reuse

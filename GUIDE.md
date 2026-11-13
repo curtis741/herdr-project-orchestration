@@ -10,15 +10,15 @@ Split the work across agents with separated context windows. Each agent has a fo
 
 ### Orchestrator
 
-The coordinator. Reads the Jira epic, builds a dependency graph, and spawns agents wave by wave. It never reads code or implements anything — it manages the DAG and makes decisions (spawn fresh worker vs reuse, when to stop an agent, how to handle blockers). Stays lightweight so it can run for the life of the epic without context degradation.
+The coordinator. Reads the project's tickets, builds a dependency graph, and spawns agents wave by wave. It never reads code or implements anything — it manages the DAG and makes decisions (spawn fresh worker vs reuse, when to stop an agent, how to handle blockers). Stays lightweight so it can run for the life of the project without context degradation.
 
 ### Librarian
 
-The knowledge base. Sits on main, ingests diffs after each PR merges, and answers questions from other agents about what changed. Also manages Jira ticket transitions (In Progress, In Code Review, Done) based on lifecycle signals from workers. Tracks the dependency graph and signals the orchestrator when tickets are unblocked. Long-lived — stays up for the entire epic.
+The knowledge base. Sits on main, ingests diffs after each PR merges, and answers questions from other agents about what changed. Also manages ticket transitions (In Progress, In Code Review, Done) based on lifecycle signals from workers. Tracks the dependency graph and signals the orchestrator when tickets are unblocked. Long-lived — stays up for the entire project.
 
 ### Researcher (optional)
 
-The domain expert. Investigates open questions — data schemas, API contracts, traffic patterns, protocol mechanics. Accumulates domain knowledge across the epic so workers don't have to research independently. Long-lived — the accumulated context is the value.
+The domain expert. Investigates open questions — data schemas, API contracts, traffic patterns, protocol mechanics. Accumulates domain knowledge across the project so workers don't have to research independently. Long-lived — the accumulated context is the value.
 
 ### Workers
 
@@ -46,15 +46,15 @@ Each project gets a state file at `~/.herdr/projects/<name>.json`. It maps roles
 
 ## Getting started
 
-**Option 1: Jump in.** If you have a Jira epic ready:
+**Option 1: Jump in.** If you have a project ready (a Jira epic, Linear project, or group of tickets with dependencies):
 
 ```
 /start-project
 ```
 
-The orchestrator reads the epic, builds the DAG, and starts spawning agents.
+The orchestrator reads the project's tickets, builds the DAG, and starts spawning agents.
 
-**Option 2: Dry run.** Test the signal protocol without touching Jira or code. The dry-run script lives in the plugin directory alongside this guide:
+**Option 2: Dry run.** Test the signal protocol without touching a tracker or code. The dry-run script lives in the plugin directory alongside this guide:
 
 ```bash
 # Resolve the plugin directory from this guide's symlink

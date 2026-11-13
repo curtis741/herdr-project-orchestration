@@ -1,13 +1,13 @@
 # Herdr Project Orchestration
 
-When one coding agent handles an entire epic, its context window fills up. By the third ticket it's slower, less accurate, and losing track of earlier work. This plugin splits the work across focused agents — each with its own context window, its own worktree, and one job to do. The result is consistent quality from the first ticket to the last. Built on [Herdr](https://herdr.dev) and Claude Code skills.
+When one coding agent handles an entire project, its context window fills up. By the third ticket it's slower, less accurate, and losing track of earlier work. This plugin splits the work across focused agents — each with its own context window, its own worktree, and one job to do. The result is consistent quality from the first ticket to the last. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.). Built on [Herdr](https://herdr.dev) and Claude Code skills.
 
 ## Install
 
 ### Prerequisites
 
 - [Herdr](https://herdr.dev) 0.7.5+
-- [Claude Code](https://claude.com/claude-code) with Jira MCP and GitHub MCP configured
+- [Claude Code](https://claude.com/claude-code) with a tracker MCP (Jira, Linear, GitHub Issues, etc.) and GitHub MCP configured
 - `jq` on PATH
 - `~/.local/bin` on your PATH
 
@@ -54,7 +54,7 @@ When you run `herdr plugin update`, the plugin directory updates in place and al
    project read alpha --lines 40
    ```
 
-4. **Or use the orchestrator skill** — run `/start-project` in Claude Code with a Jira epic key and it handles the full lifecycle: DAG building, worker spawning, wave advancement, and completion.
+4. **Or use the orchestrator skill** — run `/start-project` in Claude Code with a project key (e.g. a Jira epic, Linear project, or GitHub milestone) and it handles the full lifecycle: DAG building, worker spawning, wave advancement, and completion.
 
 ## CLI reference
 
@@ -139,11 +139,11 @@ Five Claude Code skills for the agent roles:
 
 | File | Role |
 |------|------|
-| `skills/start-project/SKILL.md` | **Orchestrator** — reads Jira epic, builds DAG, spawns agents, tracks waves |
+| `skills/start-project/SKILL.md` | **Orchestrator** — reads the project, builds DAG, spawns agents, tracks waves |
 | `skills/project-worker/SKILL.md` | **Worker** — implements one ticket, tests, pushes, opens draft PR |
-| `skills/start-project/librarian.md` | **Librarian** — tracks merged PRs, answers cross-worker questions, manages Jira transitions |
-| `skills/start-project/researcher.md` | **Researcher** — investigates domain questions, accumulates context across the epic |
-| `skills/dry-run-project/SKILL.md` | **Test harness** — validates the signal protocol without Jira or code changes |
+| `skills/start-project/librarian.md` | **Librarian** — tracks merged PRs, answers cross-worker questions, manages ticket transitions |
+| `skills/start-project/researcher.md` | **Researcher** — investigates domain questions, accumulates context across the project |
+| `skills/dry-run-project/SKILL.md` | **Test harness** — validates the signal protocol without a tracker or code changes |
 
 The orchestrator and worker are installed as Claude Code skills (`/start-project`, `/project-worker`). The librarian and researcher are role definitions that agents read during boot — not standalone skills. `DESIGN.md` has the full system design, constraints, and known gaps.
 
@@ -195,7 +195,7 @@ Workers and the librarian communicate through structured signals:
 | Signal | From → To | Purpose |
 |--------|-----------|---------|
 | `READY` | Worker → Orchestrator | Worker booted, waiting for assignment |
-| `STARTING` | Worker → Librarian | Triggers Jira transition to In Progress |
+| `STARTING` | Worker → Librarian | Triggers ticket transition to In Progress |
 | `PR_OPEN` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
 | `DONE` | Worker → Librarian | Post-merge verification complete (optional); librarian transitions to Done |
 | `BLOCKED` | Worker → Orchestrator | Escalates to user |

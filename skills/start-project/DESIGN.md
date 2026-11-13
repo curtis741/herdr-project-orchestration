@@ -6,16 +6,16 @@ Three skills, global (`~/.claude/skills/`):
 
 | Skill | File | Role |
 |-------|------|------|
-| `start-project` | `start-project/SKILL.md` | Orchestrator — Jira epic → DAG → workers |
+| `start-project` | `start-project/SKILL.md` | Orchestrator — project tickets → DAG → workers |
 | `project-worker` | `project-worker/SKILL.md` | Implementer — one ticket, full context |
-| `librarian` | `start-project/librarian.md` | Knowledge base — merged diffs, Jira transitions, answers questions |
+| `librarian` | `start-project/librarian.md` | Knowledge base — merged diffs, ticket transitions, answers questions |
 | *(project-researcher)* | *(not yet a skill)* | Long-lived domain researcher — answers questions, accumulates context |
 | `project-tester` | `project-tester/SKILL.md` | Ephemeral API tester — fresh context, talks directly to worker |
 
 ## Agent interaction model
 
 ```
-Epic Workspace (one Herdr workspace, all roles as tabs)
+Project Workspace (one Herdr workspace, all roles as tabs)
   ├── Orchestrator tab (repo root)
   ├── Librarian tab (repo root, stays on main)
   ├── Watcher tab (repo root, stays on main)
@@ -24,7 +24,7 @@ Epic Workspace (one Herdr workspace, all roles as tabs)
   ├── Worker B tab (repo root, cds into .worktrees/<ticket-b>/)
   └── Worker C tab (repo root, cds into .worktrees/<ticket-c>/)
 
-Workers ──STARTING/PR_OPEN──> Librarian (Jira transitions + operational notes)
+Workers ──STARTING/PR_OPEN──> Librarian (ticket transitions + operational notes)
 Workers ──DONE──> Librarian (post-merge verification only)
 Librarian ──PR_OPEN relay──> Orchestrator (compact: PR#, ticket, test brief)
 Librarian ──DONE relay──> Orchestrator (post-merge verification complete)
@@ -36,7 +36,7 @@ Workers ──domain questions──> Librarian or Researcher
 Orchestrator ──"PR merged, ingest"──> Librarian
 Librarian ──"UNBLOCKED — APP-XXXX"──> Orchestrator (auto-detects cleared deps)
 Researcher ──findings──> Librarian (stored alongside diffs)
-Researcher ──new tickets──> Jira + Librarian + Orchestrator (scope gaps)
+Researcher ──new tickets──> Tracker + Librarian + Orchestrator (scope gaps)
 Researcher ──out-of-scope work──> Orchestrator (flags, doesn't solve)
 Orchestrator ──"status?"──> Librarian (PR/ticket state, esp. on restart)
 Orchestrator ──spawns──> Tester (when worker provides test brief)
@@ -66,15 +66,15 @@ Examples:
 | DAG building, wave sequencing, spawning | Orchestrator | Lightweight coordination |
 | Implementation, tests, PRs | Workers | Full codebase context |
 | Merged diff summaries, answering cross-worker questions | Librarian | Single source of truth |
-| Jira ticket transitions | Librarian | Receives lifecycle signals, knows when work starts/completes |
+| Ticket transitions | Librarian | Receives lifecycle signals, knows when work starts/completes |
 | DAG monitoring, auto-unblock detection | Librarian | Sees merged signals, checks dependency graph, signals orchestrator |
 | PR/ticket status queries | Librarian | Tracks all state; orchestrator asks rather than querying GitHub |
 | Research findings (traffic, data shape, dependencies) | Librarian | Stores findings alongside merged diffs so workers can query both |
 | CI monitoring, failure reporting | Watcher | Polls CI, reports failures directly to workers, reports green to librarian |
-| Scope gap tickets | Researcher | Creates Jira tickets, reports to librarian + orchestrator |
+| Scope gap tickets | Researcher | Creates tickets in the tracker, reports to librarian + orchestrator |
 | Out-of-scope work flagging | Researcher | Flags to orchestrator immediately, doesn't solve |
 
-The librarian manages the full Jira lifecycle via signals from workers and the orchestrator:
+The librarian manages the full ticket lifecycle via signals from workers and the orchestrator:
 
 | Signal | From | Librarian transitions to |
 |--------|------|--------------------------|
@@ -106,20 +106,20 @@ Standalone shell script. State file at `~/.herdr/projects/<project-name>.json`. 
 
 ### Herdr
 
-- `herdr workspace create` — one workspace per epic (all roles as tabs)
+- `herdr workspace create` — one workspace per project (all roles as tabs)
 - `herdr tab create --workspace <id>` — one tab per role (librarian, researcher, workers)
 - `herdr agent start <name> --kind claude --pane <id>` — start agent in a pane
 - `herdr agent read <pane_id>` — read agent output
 - `herdr agent get <pane_id>` — poll agent state
 - `git worktree add <repo>/.worktrees/<ticket> -b <branch> origin/main` — worktree inside repo dir
 
-### Researcher can create Jira tickets for scope gaps
+### Researcher can create tickets for scope gaps
 
-When the researcher discovers missing work, it creates child tickets under the epic with dependency links, then reports new tickets to the librarian (for tracking) and orchestrator (for DAG update and worker spawning). This applies at two points:
-- **Fresh epic with no scope:** researcher creates the initial ticket set from discovery, orchestrator takes over with the DAG.
-- **Mid-epic gaps:** researcher finds missing work, creates tickets, reports them. Orchestrator updates the DAG and spawns workers when dependencies are met.
+When the researcher discovers missing work, it creates child tickets under the project with dependency links, then reports new tickets to the librarian (for tracking) and orchestrator (for DAG update and worker spawning). This applies at two points:
+- **Fresh project with no scope:** researcher creates the initial ticket set from discovery, orchestrator takes over with the DAG.
+- **Mid-project gaps:** researcher finds missing work, creates tickets, reports them. Orchestrator updates the DAG and spawns workers when dependencies are met.
 
-The researcher has Jira MCP access and permission to create tickets.
+The researcher has access to the ticket tracker's MCP tools and permission to create tickets.
 
 ### Researcher cannot spawn workers for trivial fixes
 
@@ -127,11 +127,11 @@ When the researcher finds a small, self-contained fix (a doc typo, a missing con
 
 ### DAG ownership is shared: orchestrator builds, librarian monitors
 
-The orchestrator builds the initial DAG from Jira and spawns workers. The librarian tracks the DAG alongside its PR summaries and auto-detects unblocked tickets when dependencies are merged. The librarian signals the orchestrator when tickets are unblocked; the orchestrator spawns workers. Neither role does both — the librarian monitors, the orchestrator acts.
+The orchestrator builds the initial DAG from the ticket tracker and spawns workers. The librarian tracks the DAG alongside its PR summaries and auto-detects unblocked tickets when dependencies are merged. The librarian signals the orchestrator when tickets are unblocked; the orchestrator spawns workers. Neither role does both — the librarian monitors, the orchestrator acts.
 
 ### Orchestrator does not research
 
-The orchestrator stays lightweight: it reads Jira, manages the DAG, and spawns agents. It never greps the codebase, reads implementation files, or verifies whether work is done by inspecting code. When it needs that information, it asks the librarian (for merged work) or the researcher (for domain questions). On restart, it asks the librarian for ticket/PR status rather than querying GitHub directly.
+The orchestrator stays lightweight: it reads the ticket tracker, manages the DAG, and spawns agents. It never greps the codebase, reads implementation files, or verifies whether work is done by inspecting code. When it needs that information, it asks the librarian (for merged work) or the researcher (for domain questions). On restart, it asks the librarian for ticket/PR status rather than querying GitHub directly.
 
 ## Known gaps
 
@@ -203,7 +203,7 @@ The orchestrator's reboot-recovery procedure is in `start-project/SKILL.md` § R
 - **Signal economy** — every signal burns tokens in both sender and receiver. Route lifecycle events through one agent (the librarian) rather than fanning out. The orchestrator gets compact relays, not raw detail.
 - Max 3 concurrent workers
 - Workers don't spawn sub-agents — escalate to orchestrator
-- Librarian, watcher, and researcher are long-lived — all stay up for the life of the epic. Librarian and researcher are on-demand (idle is their correct steady state). The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
+- Librarian, watcher, and researcher are long-lived — all stay up for the life of the project. Librarian and researcher are on-demand (idle is their correct steady state). The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
 - Librarian ingests merged PRs and research findings
 - All PRs opened as drafts
 - Never force-push

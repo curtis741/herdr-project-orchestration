@@ -1,24 +1,24 @@
 # System Design
 
-Multi-agent system for working through Jira epics with separated context windows.
+Multi-agent system for working through projects (groups of tickets with dependencies) using separated context windows. Tracker-agnostic — works with Jira, Linear, GitHub Issues, or any tracker with parent/child tickets and status transitions.
 
 ## Problem
 
-A 10-ticket epic doesn't fit in one agent's context. Loading full codebase context + implementation details for all tickets bloats the window and degrades quality. Subagents lose context entirely. We need agents that stay focused on their role.
+A 10-ticket project doesn't fit in one agent's context. Loading full codebase context + implementation details for all tickets bloats the window and degrades quality. Subagents lose context entirely. We need agents that stay focused on their role.
 
 ## Three roles, three context profiles
 
 | Role | Skill | Context profile | Lifetime |
 |------|-------|-----------------|----------|
-| **Orchestrator** | `start-project` | Lightweight: ticket list, DAG, status | Full epic |
+| **Orchestrator** | `start-project` | Lightweight: ticket list, DAG, status | Full project |
 | **Worker** | `project-worker` | Heavy: full CLAUDE.md chain, pack context, one ticket | One ticket or one sequential chain |
-| **Librarian** | `project-librarian` | Medium: summaries of merged changes | Full epic |
+| **Librarian** | `project-librarian` | Medium: summaries of merged changes | Full project |
 
 The orchestrator never writes code. Workers never manage other workers. The librarian never implements — it just knows what was merged and answers questions.
 
 ## How it flows
 
-1. Orchestrator reads the epic from Jira, builds a dependency DAG from "depends on" links
+1. Orchestrator reads the project's tickets from the tracker, builds a dependency DAG from "depends on" links
 2. Presents the work plan (waves, sequential chains, repo mapping) for confirmation
 3. Spawns the librarian on main (no worktree — reads merged code only)
 4. Spawns wave 1 workers via `herdr worktree create` (one worktree per ticket, max 3 concurrent)
@@ -32,7 +32,7 @@ The orchestrator never writes code. Workers never manage other workers. The libr
 ```
 Orchestrator (any session — creates and manages the workspace)
   │
-  └── Epic Workspace (one Herdr workspace)
+  └── Project Workspace (one Herdr workspace)
         ├── Librarian tab (repo root, stays on main)
         ├── Watcher tab (repo root, stays on main)
         ├── Researcher tab (optional, repo root)
@@ -55,7 +55,7 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 | Signal | From → To | Purpose |
 |--------|-----------|---------|
 | `READY` | Worker → Orchestrator | Worker booted, waiting for assignment |
-| `STARTING` | Worker → Librarian | Triggers Jira transition to In Progress |
+| `STARTING` | Worker → Librarian | Triggers ticket transition to In Progress |
 | `PR_OPEN` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
 | `DONE` | Worker → Librarian | Post-merge verification complete (optional); librarian transitions to Done, relays to orchestrator |
 | `BLOCKED` | Worker → Orchestrator | Escalates to user |
@@ -72,15 +72,15 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 | DAG building, wave sequencing, spawning | Orchestrator | Lightweight coordination |
 | Implementation, tests, PRs | Workers | Full codebase context |
 | Merged diff summaries, answering cross-worker questions | Librarian | Single source of truth |
-| Jira ticket transitions | Librarian | Receives lifecycle signals, knows when work starts/completes |
+| Ticket transitions | Librarian | Receives lifecycle signals, knows when work starts/completes |
 | DAG monitoring, auto-unblock detection | Librarian | Sees merged signals, checks dependency graph, signals orchestrator |
 | PR/ticket status queries | Librarian | Tracks all state; orchestrator asks rather than querying GitHub |
 | Research findings (traffic, data shape, dependencies) | Librarian | Stores findings alongside merged diffs so workers can query both |
 | CI monitoring, failure reporting | Watcher | Polls CI, reports failures directly to workers, reports green to librarian |
-| Scope gap tickets | Researcher | Creates Jira tickets, reports to librarian + orchestrator |
+| Scope gap tickets | Researcher | Creates tickets in the tracker, reports to librarian + orchestrator |
 | Out-of-scope work flagging | Researcher | Flags to orchestrator immediately, doesn't solve |
 
-The librarian manages the full Jira lifecycle via signals from workers and the orchestrator:
+The librarian manages the full ticket lifecycle via signals from workers and the orchestrator:
 
 | Signal | From | Librarian transitions to |
 |--------|------|--------------------------|

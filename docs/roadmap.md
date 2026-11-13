@@ -19,12 +19,12 @@
 ## Ideas (unvalidated)
 
 - **Worker handoff briefs** — workers emit operational knowledge at PR_OPEN that the diff doesn't capture. Librarian stores it for future worker queries. (Partially implemented in v0.6.0 via operational notes in PR_OPEN signal.)
-- **Cross-repo orchestration** — map tickets to repos by Jira labels/components. Most land in the primary repo, some in frontend, pipelines, etc.
+- **Cross-repo orchestration** — map tickets to repos by labels/components. Most land in the primary repo, some in frontend, pipelines, etc.
 - **herdr-jira integration** — herdr-jira plugin (15 stars) provides a Jira TUI pane. Could complement our orchestrator for browsing/delegation.
 
 ## Ecosystem context (2026-11-13)
 
-Surveyed 92 herdr plugins in the orchestration/multi-agent space. Nothing replicates our pipeline (Jira epic → dependency DAG → wave scheduling → librarian knowledge accumulation → semantic signals → watcher CI monitoring). Closest:
+Surveyed 92 herdr plugins in the orchestration/multi-agent space. Nothing replicates our pipeline (project tickets → dependency DAG → wave scheduling → librarian knowledge accumulation → semantic signals → watcher CI monitoring). Closest:
 
 | Plugin | What it does | Relationship |
 |--------|-------------|-------------|

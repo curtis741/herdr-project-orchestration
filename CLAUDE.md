@@ -1,6 +1,6 @@
 # Herdr Project Orchestration Plugin
 
-Multi-agent project orchestration for Jira epics, packaged as a Herdr plugin.
+Multi-agent project orchestration, packaged as a Herdr plugin. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.).
 
 ## Repo layout
 
@@ -27,7 +27,7 @@ docs/
 
 ## How to refine skills
 
-1. **Run an epic** with `/start-project` — observe what breaks, what's awkward, what's missing
+1. **Run a project** with `/start-project` — observe what breaks, what's awkward, what's missing
 2. **Log findings** as bullets in the "Feedback — New" section of `docs/decisions.md`
 3. **In a separate session** in this repo, route each finding:
    - Behavioral rule for a role → that role's `SKILL.md`
@@ -56,7 +56,9 @@ When refining skills, watch for duplicate signals (same event sent to multiple a
 
 ## Content guidelines
 
-Skills must not contain organization-specific or user-specific references — no company names, internal repo paths, internal URLs, product names, or team-specific tooling. Use generic placeholders. This plugin is meant to work for any Jira epic in any codebase.
+Skills must not contain organization-specific or user-specific references — no company names, internal repo paths, internal URLs, product names, or team-specific tooling. Use generic placeholders. This plugin is meant to work for any project in any codebase.
+
+Skills must also be **tracker-agnostic**. Don't reference specific tools (e.g. "Jira MCP", "Linear MCP") or assume which tracker the user has. Describe *what* to do ("read the project's tickets", "transition the ticket to In Progress"), not *which tool to call*. The agent figures out the tracker from its available MCP tools and the repo's project memory/CLAUDE.md. The repo — not the plugin — tells agents how to do ticket management.
 
 ## Releasing
 

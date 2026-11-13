@@ -1,11 +1,11 @@
 ---
 name: start-project
-description: "Orchestrate a Jira epic across multiple Herdr worker agents. Reads the epic's tickets, builds a dependency DAG, spawns worker agents in tabs (one per ticket, worktree inside repo dir), and tracks progress wave by wave. Also spawns a librarian agent that ingests merged diffs so later workers can ask about earlier work. Use when the user says 'start project', 'start epic', 'work on epic APP-XXXX', 'orchestrate this epic', or 'spin up workers for this epic'. Requires Herdr."
+description: "Orchestrate a project across multiple Herdr worker agents. Reads the project's tickets, builds a dependency DAG, spawns worker agents in tabs (one per ticket, worktree inside repo dir), and tracks progress wave by wave. Also spawns a librarian agent that ingests merged diffs so later workers can ask about earlier work. Use when the user says 'start project', 'start epic', 'work on epic APP-XXXX', 'orchestrate this epic', or 'spin up workers for this epic'. Requires Herdr."
 ---
 
-# start-project — Epic Orchestrator
+# start-project — Project Orchestrator
 
-You are the orchestrator for a multi-ticket Jira epic. Your job is to stay lightweight, track progress, and coordinate workers. You never write implementation code yourself.
+You are the orchestrator for a multi-ticket project (an epic, a group of linked tickets, or any set of tasks with dependencies). Your job is to stay lightweight, track progress, and coordinate workers. You never write implementation code yourself.
 
 ## Prerequisites
 
@@ -17,11 +17,11 @@ which project
 
 If it fails, stop — this skill requires the project-orchestration plugin (`herdr plugin install curtis741/herdr-project-orchestration`).
 
-## Step 1: Load the epic
+## Step 1: Load the project
 
-Parse the epic key from the user's message (e.g. `APP-1234`). Use the Jira MCP tools to:
+Parse the project key from the user's message (e.g. `APP-1234`). Use the ticket tracker's MCP tools to:
 
-1. Fetch the epic and its child tickets
+1. Fetch the project and its child tickets
 2. For each ticket, read its summary, description, and **depends-on links** (`is blocked by` / `depends on`)
 3. Build a dependency DAG — tickets with no unfinished dependencies are wave 1
 4. Suggest a session rename: `Rename this session: /rename APP-XXXX <epic summary>`
@@ -49,7 +49,7 @@ Repo mapping:
   APP-1005: frontend/
 ```
 
-**Spikes / research tickets:** If the epic already has populated child tickets (descriptions, dependency links), skip the research phase — the spike is done. Exclude spike tickets from the DAG and note them as already resolved in the plan. If the epic has open discovery questions (listed in the description or spike comments), spawn a lightweight research agent alongside wave 1. The research agent closes its own spike ticket in Jira when its work is done — the orchestrator doesn't manage that transition.
+**Spikes / research tickets:** If the project already has populated child tickets (descriptions, dependency links), skip the research phase — the spike is done. Exclude spike tickets from the DAG and note them as already resolved in the plan. If the project has open discovery questions (listed in the description or spike comments), spawn a lightweight research agent alongside wave 1. The research agent closes its own spike ticket when its work is done — the orchestrator doesn't manage that transition.
 
 Wait for the user to confirm or adjust before proceeding.
 
@@ -65,17 +65,17 @@ Check each ticket's labels, components, or description for which repo it targets
 
 If you can't determine the repo from labels, ask the user.
 
-## Step 3: Create the epic workspace and initialize the project
+## Step 3: Create the project workspace and initialize
 
-One workspace holds everything for this epic — orchestrator tab, librarian tab, and worker tabs:
+One workspace holds everything for this project — orchestrator tab, librarian tab, and worker tabs:
 
 ```bash
 herdr workspace create --cwd "$PWD" --label "<epic human name> (APP-XXXX)" --focus
 ```
 
-Use the epic's human-readable name as the label — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to.
+Use the project's human-readable name as the label — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to.
 
-Note the workspace ID from the response. Pick a project name — lowercase epic key (e.g. `app-1234`) or ask the user if ambiguous. Initialize the project and export the env var:
+Note the workspace ID from the response. Pick a project name — lowercase project key (e.g. `app-1234`) or ask the user if ambiguous. Initialize the project and export the env var:
 
 ```bash
 eval "$(project init <project-name> <workspace-id>)"
@@ -93,7 +93,7 @@ All tabs you create below get `--env HERDR_PROJECT=<project-name>` so every agen
 
 ### Spawn the librarian
 
-Create a tab for the librarian in the epic workspace:
+Create a tab for the librarian in the project workspace:
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=<project-name> --no-focus
@@ -135,7 +135,7 @@ Your role is defined in ~/.claude/skills/start-project/librarian.md — read it 
 
 ### Spawn watcher
 
-The watcher monitors CI on all worker PRs and reports failures directly to workers. Spawn it alongside the librarian — it's long-lived, one per epic.
+The watcher monitors CI on all worker PRs and reports failures directly to workers. Spawn it alongside the librarian — it's long-lived, one per project.
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "watcher" --env HERDR_PROJECT=<project-name> --no-focus
@@ -167,7 +167,7 @@ Your role is defined in ~/.claude/skills/start-project/watcher.md — read it no
 
 ### Spawn researcher (if needed)
 
-If the epic has open discovery questions (noted in the description, spike comments, or your own judgment), spawn a long-lived researcher alongside wave 1. Skip this if the epic is well-understood.
+If the project has open discovery questions (noted in the description, spike comments, or your own judgment), spawn a long-lived researcher alongside wave 1. Skip this if the project is well-understood.
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "researcher" --env HERDR_PROJECT=<project-name> --no-focus
@@ -396,11 +396,11 @@ When all tickets are done and all PRs are merged:
 
 1. Tell the librarian:
    ```bash
-   project prompt librarian "All tickets in epic APP-XXXX are complete. Transition the epic to Done in Jira and summarize the full scope of changes across all PRs." --wait --timeout 120000
+   project prompt librarian "All tickets in project APP-XXXX are complete. Transition the project to Done and summarize the full scope of changes across all PRs." --wait --timeout 120000
    ```
 2. Report to the user:
    ```
-   [start-project] Epic APP-XXXX complete.
+   [start-project] Project APP-XXXX complete.
    - N tickets implemented
    - N PRs merged
    - Librarian has the full change summary if you need it
@@ -408,7 +408,7 @@ When all tickets are done and all PRs are merged:
 
 ## Reboot recovery
 
-If you're a fresh orchestrator session picking up an epic after a reboot (computer restart, terminal closed), all pane IDs in the state file are stale but everything else is intact:
+If you're a fresh orchestrator session picking up a project after a reboot (computer restart, terminal closed), all pane IDs in the state file are stale but everything else is intact:
 
 1. Register yourself: `project register orchestrator`
 2. Run `project roster` — it shows every agent's session ID and last ticket, even stopped ones
@@ -419,7 +419,7 @@ If you're a fresh orchestrator session picking up an epic after a reboot (comput
    ```
    Each agent self-registers on boot, which updates its pane ID in the state file.
 4. Once the librarian is back, ask it: `project ask librarian "Orchestrator rebooted. What's the current state of all tickets?"`
-5. Fetch the epic from Jira and rebuild the DAG (same as Step 1)
+5. Fetch the project from the ticket tracker and rebuild the DAG (same as Step 1)
 6. Resume or spawn workers as needed based on ticket states
 
 Agents resumed with `--resume` retain their full context from the prior session — no need to re-send assignments.
