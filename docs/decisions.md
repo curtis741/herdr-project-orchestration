@@ -22,6 +22,10 @@ Key decisions with reasoning, open questions, and the feedback log from real epi
 - **Lifecycle signals flow through the librarian** — workers send `PR_OPEN` and `DONE` to the librarian only. The librarian transitions Jira, stores operational notes, routes to the watcher (CI monitoring) and orchestrator (wave advancement). One routing point, one signal path. Reduces duplicate token burn from workers fanning out the same event to multiple agents.
 - **Watcher agent** — long-lived CI monitor, one per epic. Receives watch assignments from the librarian, polls CI status, reports failures directly to workers, reports green to the librarian. Doesn't fix code, doesn't mark PRs ready, doesn't talk to the orchestrator. Context stays lean because it only reads CI output, not implementation code.
 
+## Evaluated and kept
+
+- **`project` CLI vs herdr native agent commands** (2026-11-13) — audited every `project` subcommand against herdr 0.9.5 capabilities. herdr's `agent start <name>` + `agent prompt <name>` could replace our role→pane resolution, but `project prompt` adds FROM prefixes, NEED escalation for stopped agents, and ticket tracking — all of which we use. The resolution cost is one `jq` read of a tiny JSON file. `hc` (herdr-core's parent/child agent model) is not available locally. Conclusion: the project CLI is a thin semantic layer on herdr plumbing, not a reimplementation. Not worth refactoring.
+
 ## Open questions
 
 - **Concurrency limit** — is 3 right? Depends on machine resources and task size.

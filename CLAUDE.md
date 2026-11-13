@@ -22,6 +22,7 @@ skills/
 docs/
   design.md                 # What the system is and how it works
   decisions.md              # Why: key decisions, open questions, feedback log
+  roadmap.md                # What's next, short/medium term, ideas
 ```
 
 ## How to refine skills
