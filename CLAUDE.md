@@ -54,5 +54,4 @@ Skills must not contain organization-specific or user-specific references — no
 
 - Version lives in `herdr-plugin.toml` (single source of truth)
 - `CHANGELOG.md` entries are sent to running orchestrators on `herdr plugin update` — only include changes that affect behavior of running agents (new commands, changed signals, skill changes). Internal cleanup, repo structure, or dev tooling changes don't belong.
-- Git history is squashed to a single commit. Amend and force push freely — there's no history to preserve.
 - After any batch of changes, run a fresh subagent to audit for identifiable information (company names, internal URLs, repo paths, product names). Repeat until it comes back clean. The audit agent should have no prior context about what was there.
