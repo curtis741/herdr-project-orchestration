@@ -7,6 +7,7 @@ set -euo pipefail
 # The orchestrator registers agents as it spawns them; workers just use them.
 #
 # State file: ~/.herdr/projects/<project-name>.json
+# Signal log: ~/.herdr/projects/<project-name>.signals.log
 # Project name comes from: HERDR_PROJECT env var (injected via herdr tab create --env)
 
 PROJECTS_DIR="$HOME/.herdr/projects"
@@ -38,6 +39,9 @@ Commands:
   resolve <role>                   Print the pane ID for a role (for scripting)
   session <role>                   Print the session ID for a role
   file                             Print the path to the state file
+  log [--tail N]                   Print the signal log (default: last 50 entries)
+  log-decision <decision-type> <payload>
+                                   Log an orchestrator decision (wave transition, spawn, etc.)
 
 Project name is auto-detected from $HERDR_PROJECT.
 Override with --project <name>.
@@ -67,6 +71,18 @@ ensure_state() {
     exit 1
   fi
   echo "$f"
+}
+
+signals_file() {
+  echo "$PROJECTS_DIR/$(resolve_project).signals.log"
+}
+
+log_signal() {
+  local sender="$1" receiver="$2" signal_type="$3" payload="$4"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$ts" "$sender" "$receiver" "$signal_type" "$payload" \
+    >> "$(signals_file)"
 }
 
 read_field() {
@@ -147,6 +163,7 @@ cmd_register() {
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
       herdr agent prompt "$orch_pane" "READY — $role" 2>/dev/null || true
+      log_signal "$role" "orchestrator" "READY" "$role registered"
     fi
   fi
 
@@ -180,6 +197,7 @@ cmd_assign() {
   jq --arg role "$role" --arg ticket "$ticket" \
     '.agents[$role].current_ticket = $ticket | .agents[$role].tickets = ((.agents[$role].tickets // []) + [$ticket] | unique)' \
     "$f" > "$tmp" && mv "$tmp" "$f"
+  log_signal "orchestrator" "$role" "ASSIGN" "$ticket"
   echo "assigned: $role → $ticket"
 }
 
@@ -207,6 +225,7 @@ cmd_stop() {
   jq --arg role "$role" --arg sid "$sid" \
     '.agents[$role].stopped = true | if $sid != "" then .agents[$role].session_id = $sid else . end | .agents[$role].stopped_at = (now | todate)' \
     "$f" > "$tmp" && mv "$tmp" "$f"
+  log_signal "orchestrator" "$role" "STOP" "$role stopped"
   echo "stopped: $role (session preserved)"
 }
 
@@ -279,12 +298,28 @@ cmd_prompt() {
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
       herdr agent prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original message: $message" 2>/dev/null || true
+      log_signal "${caller:-unknown}" "orchestrator" "NEED" "$role stopped — escalated. Original: $message"
       echo "escalated to orchestrator: $role is stopped" >&2
     else
       echo "error: $role is stopped and orchestrator is not reachable" >&2
     fi
     exit 1
   fi
+
+  # Classify signal type from message prefix
+  local signal_type="PROMPT"
+  case "$message" in
+    READY\ *|READY)           signal_type="READY" ;;
+    STARTING\ *)              signal_type="STARTING" ;;
+    DONE\ *)                  signal_type="DONE" ;;
+    PR_OPEN\ *)               signal_type="PR_OPEN" ;;
+    BLOCKED\ *)               signal_type="BLOCKED" ;;
+    SCOPE\ *)                 signal_type="SCOPE" ;;
+    NEED\ *)                  signal_type="NEED" ;;
+    RESEARCH\ *)              signal_type="RESEARCH" ;;
+  esac
+
+  log_signal "${caller:-unknown}" "$role" "$signal_type" "$message"
 
   # Prefix with sender so the recipient can distinguish cross-agent messages from direct instructions
   if [[ -n "$caller" ]]; then
@@ -354,6 +389,8 @@ cmd_ask() {
     fi
     exit 1
   fi
+
+  log_signal "${caller:-unknown}" "$role" "ASK" "$message"
 
   if [[ -n "$caller" ]]; then
     message="FROM($caller): $message"
@@ -511,6 +548,44 @@ cmd_research() {
   echo "sent to $target${my_role:+ (reply will come back to $my_role)}"
 }
 
+cmd_log() {
+  local tail_n="50"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --tail) shift; tail_n="${1:-50}"; shift ;;
+      *) shift ;;
+    esac
+  done
+  local lf
+  lf="$(signals_file)"
+  if [[ ! -f "$lf" ]]; then
+    echo "no signals logged yet" >&2
+    return
+  fi
+  printf '%-20s %-14s %-14s %-10s %s\n' "TIMESTAMP" "SENDER" "RECEIVER" "TYPE" "PAYLOAD"
+  echo "────────────────────────────────────────────────────────────────────────────────"
+  tail -n "$tail_n" "$lf" | while IFS=$'\t' read -r ts sender receiver sig_type payload; do
+    printf '%-20s %-14s %-14s %-10s %s\n' "$ts" "$sender" "$receiver" "$sig_type" "$payload"
+  done
+}
+
+cmd_log_decision() {
+  local decision_type="${1:-}"
+  shift || true
+  local payload="$*"
+  if [[ -z "$decision_type" || -z "$payload" ]]; then
+    echo "usage: project log-decision <decision-type> <payload>" >&2
+    echo "  types: wave-transition, spawn, assign, reuse, escalate" >&2
+    exit 1
+  fi
+  local f
+  f="$(ensure_state)"
+  local caller
+  caller="$(resolve_caller "$f")"
+  log_signal "${caller:-orchestrator}" "-" "DECISION:${decision_type}" "$payload"
+  echo "logged: DECISION:${decision_type}"
+}
+
 cmd_resolve() {
   local role="${1:-}"
   if [[ -z "$role" ]]; then
@@ -583,5 +658,7 @@ case "$cmd" in
   resolve)    cmd_resolve "$@" ;;
   session)    cmd_session "$@" ;;
   file)       cmd_file ;;
+  log)        cmd_log "$@" ;;
+  log-decision) cmd_log_decision "$@" ;;
   *)          usage ;;
 esac
