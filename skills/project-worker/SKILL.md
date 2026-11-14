@@ -165,6 +165,16 @@ Skip this step for non-API tickets (model changes, background jobs, migrations).
 
 ## Step 9: Signal completion
 
+### Fast-path (orchestrator-designated only)
+
+If your assignment is marked **fast-path**, skip the PR and test brief steps (Steps 7–8). Commit and push to your branch, then signal DONE directly to the librarian with a summary of what changed. The orchestrator handles the merge. Workers never self-select fast-path — it's always decided by the orchestrator or user when assigning the ticket. Typical fast-path candidates: doc/config updates, skill tweaks, one-line fixes.
+
+```bash
+project prompt librarian "DONE — APP-XXXX. <summary of changes>"
+```
+
+### Standard path
+
 Two signals, sent to the **librarian only**:
 
 ### PR_OPEN (always)
