@@ -2,7 +2,7 @@
 
 ## Next up
 
-- **Battle-test v0.6.0** — run a real epic with the PR_OPEN/DONE split, watcher agent, and librarian relay. Validate the signal flow end-to-end before publishing.
+- **Battle-test v0.6.0** — run a real epic with the COMPLETE/DONE split, watcher agent, and librarian relay. Validate the signal flow end-to-end before publishing.
 
 ## Short term
 
@@ -18,7 +18,7 @@
 
 ## Ideas (unvalidated)
 
-- **Worker handoff briefs** — workers emit operational knowledge at PR_OPEN that the diff doesn't capture. Librarian stores it for future worker queries. (Partially implemented in v0.6.0 via operational notes in PR_OPEN signal.)
+- **Worker handoff briefs** — workers emit operational knowledge at COMPLETE that the diff doesn't capture. Librarian stores it for future worker queries. (Partially implemented in v0.6.0 via operational notes in COMPLETE signal.)
 - **Cross-repo orchestration** — map tickets to repos by labels/components. Most land in the primary repo, some in frontend, pipelines, etc.
 - **herdr-jira integration** — herdr-jira plugin (15 stars) provides a Jira TUI pane. Could complement our orchestrator for browsing/delegation.
 

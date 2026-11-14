@@ -2,11 +2,11 @@
 
 ## 0.6.0
 
-- **`PR_OPEN` / `DONE` signal split** — `DONE` is replaced by `PR_OPEN` for the common case (PR opened, implementation complete). `DONE` is now optional, only for post-merge verification (data migrations, production checks). Most tickets only send `PR_OPEN`.
-- **Signals flow through the librarian** — workers send `PR_OPEN` and `DONE` to the librarian only. The librarian transitions Jira, stores operational notes, routes to the watcher and orchestrator. Workers no longer signal the orchestrator directly for completion. Reduces duplicate token burn.
+- **`COMPLETE` / `DONE` signal split** — `DONE` is replaced by `COMPLETE` for the common case (PR opened, implementation complete). `DONE` is now optional, only for post-merge verification (data migrations, production checks). Most tickets only send `COMPLETE`.
+- **Signals flow through the librarian** — workers send `COMPLETE` and `DONE` to the librarian only. The librarian transitions Jira, stores operational notes, routes to the watcher and orchestrator. Workers no longer signal the orchestrator directly for completion. Reduces duplicate token burn.
 - **Watcher agent** — new long-lived CI monitor role (`start-project/watcher.md`). Spawned alongside the librarian at epic start. Receives `WATCH` assignments from the librarian, polls CI status, reports failures directly to workers, reports green to the librarian. Doesn't fix code, doesn't talk to the orchestrator.
 - **Signal economy principle** — new guidance in CLAUDE.md and DESIGN.md: minimize inter-agent chatter, one routing point per lifecycle event. Design signals so each event has a single routing agent rather than fanning out to multiple recipients.
-- **Workers include operational notes in `PR_OPEN`** — deploy timing, environment quirks, fragile steps. The librarian stores these alongside diff summaries for future worker queries.
+- **Workers include operational notes in `COMPLETE`** — deploy timing, environment quirks, fragile steps. The librarian stores these alongside diff summaries for future worker queries.
 
 ## 0.5.0
 

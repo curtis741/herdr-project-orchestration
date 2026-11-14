@@ -83,7 +83,7 @@ Workers and the orchestrator send you lifecycle signals. Transition the ticket u
 | Signal | From | Transition |
 |--------|------|------------|
 | `STARTING — APP-XXXX` | Worker | → In Progress |
-| `PR_OPEN — PR #N for APP-XXXX` | Worker | → In Code Review (relay to orchestrator + watcher) |
+| `COMPLETE — PR #N for APP-XXXX` | Worker | → In Code Review (relay to orchestrator + watcher) |
 | `DONE — APP-XXXX verified` | Worker | → Done (only for post-merge verification) |
 | `PR #N merged for APP-XXXX` | Orchestrator | → Acceptance Test or Done |
 
@@ -91,9 +91,9 @@ For spike/research tickets: when a research agent reports its findings to you, c
 
 Transition IDs vary by issue type — look up available transitions for the ticket before transitioning. Step through transitions in order (don't skip steps).
 
-## PR_OPEN relay
+## COMPLETE relay
 
-Workers send `PR_OPEN` only to you — you are the single routing point. When you receive one:
+Workers send `COMPLETE` only to you — you are the single routing point. When you receive one:
 
 1. Transition the ticket to In Code Review
 2. Store any operational notes the worker included — these are queryable alongside diff summaries
@@ -106,14 +106,14 @@ project prompt watcher "WATCH — PR #N for APP-XXXX, report failures to <worker
 4. Relay a compact summary to the orchestrator. Include the test brief if the worker provided one:
 
 ```bash
-project prompt orchestrator "PR_OPEN — PR #N for APP-XXXX. Test brief: <if worker included one, otherwise omit>"
+project prompt orchestrator "COMPLETE — PR #N for APP-XXXX. Test brief: <if worker included one, otherwise omit>"
 ```
 
-For follow-up PRs (worker sends another `PR_OPEN` with a new PR number), repeat the same steps — the watcher adds the new PR to its watch list.
+For follow-up PRs (worker sends another `COMPLETE` with a new PR number), repeat the same steps — the watcher adds the new PR to its watch list.
 
 ## DONE signal (post-merge verification)
 
-When a worker sends `DONE` (separate from `PR_OPEN`), the worker has completed post-merge acceptance work — data migration verified, production checks passed. Transition the ticket to Done and relay to the orchestrator:
+When a worker sends `DONE` (separate from `COMPLETE`), the worker has completed post-merge acceptance work — data migration verified, production checks passed. Transition the ticket to Done and relay to the orchestrator:
 
 ```bash
 project prompt orchestrator "DONE — APP-XXXX verified in production. <one-line summary>"

@@ -11,7 +11,7 @@ You are a worker agent assigned to a single ticket as part of a larger project. 
 
 Two commands for agent communication:
 
-- **`project prompt <role> <message>`** — fire a signal, don't need the answer (STARTING, PR_OPEN, DONE, SCOPE, BLOCKED)
+- **`project prompt <role> <message>`** — fire a signal, don't need the answer (STARTING, COMPLETE, DONE, SCOPE, BLOCKED)
 - **`project ask <role> <question>`** — ask a question, get the reply printed to stdout (librarian queries, dependency lookups)
 
 Your boot prompt tells you your role name (e.g. `alpha`, `bravo`). Other roles you can always reach: `orchestrator`, `librarian`, `researcher`. The orchestrator's assignment tells you about other workers when relevant.
@@ -167,27 +167,27 @@ Skip this step for non-API tickets (model changes, background jobs, migrations).
 
 Two signals, sent to the **librarian only**:
 
-### PR_OPEN (always)
+### COMPLETE (always)
 
 After the PR is open, signal the librarian. Include operational notes (what you learned beyond the diff) and the test brief if applicable.
 
 ```bash
-project prompt librarian "PR_OPEN — PR #<number> for <ticket-key>. <operational notes: migration timing, environment quirks, fragile steps>. Test brief: <if applicable, otherwise omit>"
+project prompt librarian "COMPLETE — PR #<number> for <ticket-key>. <operational notes: migration timing, environment quirks, fragile steps>. Test brief: <if applicable, otherwise omit>"
 ```
 
 The librarian transitions the ticket to In Code Review, starts CI watching, and relays to the orchestrator. Don't signal the orchestrator directly.
 
-For follow-up PRs (fixes after merge, second pass), send another `PR_OPEN` with the new PR number.
+For follow-up PRs (fixes after merge, second pass), send another `COMPLETE` with the new PR number.
 
 ### DONE (only when you have post-merge work)
 
-If your ticket requires post-merge verification (data migration, production checks, manual validation), stay alive after `PR_OPEN`. Once you've verified the work in production, signal done-done:
+If your ticket requires post-merge verification (data migration, production checks, manual validation), stay alive after `COMPLETE`. Once you've verified the work in production, signal done-done:
 
 ```bash
 project prompt librarian "DONE — <ticket-key> verified. <what you verified and the results>"
 ```
 
-Most tickets don't need this — `PR_OPEN` is the last signal for typical implementation work. Only send `DONE` when you've done post-merge acceptance work that the CI/merge flow can't cover.
+Most tickets don't need this — `COMPLETE` is the last signal for typical implementation work. Only send `DONE` when you've done post-merge acceptance work that the CI/merge flow can't cover.
 
 The orchestrator may prompt you with the next ticket if you're part of a sequential chain.
 

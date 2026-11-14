@@ -22,7 +22,7 @@ The orchestrator never writes code. Workers never manage other workers. The libr
 2. Presents the work plan (waves, sequential chains, repo mapping) for confirmation
 3. Spawns the librarian on main (no worktree — reads merged code only)
 4. Spawns wave 1 workers via `herdr worktree create` (one worktree per ticket, max 3 concurrent)
-5. Workers implement, test, push, open draft PRs, signal `PR_OPEN` to the librarian
+5. Workers implement, test, push, open draft PRs, signal `COMPLETE` to the librarian
 6. After a PR is merged, orchestrator tells the librarian to ingest the diff
 7. Orchestrator checks which wave 2+ tickets are unblocked, spawns workers for them
 8. Wave 2+ workers can `project ask librarian "..."` to ask about earlier work
@@ -47,7 +47,7 @@ Workers start scoped to the repo root (shared memory, session list) and `cd` int
 
 Two commands via the `project` CLI, which resolves roles to pane IDs from a shared state file. No agent names to hallucinate, no `herdr agent list` to parse.
 
-- **`project prompt`** — fire a signal, don't need the reply (STARTING, PR_OPEN, DONE, BLOCKED, SCOPE, assignments, merge notifications)
+- **`project prompt`** — fire a signal, don't need the reply (STARTING, COMPLETE, DONE, BLOCKED, SCOPE, assignments, merge notifications)
 - **`project ask`** — send a question, wait for the agent to finish, print its pane output to stdout so the caller gets the answer in context
 
 ### Signal protocol
@@ -56,7 +56,7 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 |--------|-----------|---------|
 | `READY` | Worker → Orchestrator | Worker booted, waiting for assignment |
 | `STARTING` | Worker → Librarian | Triggers ticket transition to In Progress |
-| `PR_OPEN` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
+| `COMPLETE` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
 | `DONE` | Worker → Librarian | Post-merge verification complete (optional); librarian transitions to Done, relays to orchestrator |
 | `BLOCKED` | Worker → Orchestrator | Escalates to user |
 | `UNBLOCKED` | Librarian → Orchestrator | Dependency cleared, ready for next worker |
@@ -85,7 +85,7 @@ The librarian manages the full ticket lifecycle via signals from workers and the
 | Signal | From | Librarian transitions to |
 |--------|------|--------------------------|
 | `STARTING — APP-XXXX` | Worker | In Progress |
-| `PR_OPEN — PR #N for APP-XXXX` | Worker | In Code Review |
+| `COMPLETE — PR #N for APP-XXXX` | Worker | In Code Review |
 | `DONE — APP-XXXX verified` | Worker | Done (post-merge verification) |
 | `PR #N merged for APP-XXXX` | Orchestrator | Acceptance Test or Done |
 | Research complete | Research agent | Closes spike ticket |

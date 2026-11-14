@@ -273,7 +273,7 @@ Workers message you directly when they finish, hit a blocker, or find scope cree
 project status
 ```
 
-When the librarian relays a `PR_OPEN` signal for a worker (or the worker reaches `idle`):
+When the librarian relays a `COMPLETE` signal for a worker (or the worker reaches `idle`):
 
 1. Verify a draft PR was opened (check via GitHub MCP)
 2. Notify the user: `[start-project] APP-1001 — PR #XXXX opened`
