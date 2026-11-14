@@ -84,6 +84,7 @@ Workers and the orchestrator send you lifecycle signals. Transition the ticket u
 |--------|------|------------|
 | `STARTING — APP-XXXX` | Worker | → In Progress |
 | `PR_OPEN — PR #N for APP-XXXX` | Worker | → In Code Review (relay to orchestrator + watcher) |
+| `DONE — APP-XXXX` (fast-path, no prior PR_OPEN) | Worker | → Done (relay to orchestrator) |
 | `DONE — APP-XXXX verified` | Worker | → Done (only for post-merge verification) |
 | `PR #N merged for APP-XXXX` | Orchestrator | → Acceptance Test or Done |
 
@@ -111,9 +112,19 @@ project prompt orchestrator "PR_OPEN — PR #N for APP-XXXX. Test brief: <if wor
 
 For follow-up PRs (worker sends another `PR_OPEN` with a new PR number), repeat the same steps — the watcher adds the new PR to its watch list.
 
-## DONE signal (post-merge verification)
+## DONE signal — fast-path (no preceding PR_OPEN)
 
-When a worker sends `DONE` (separate from `PR_OPEN`), the worker has completed post-merge acceptance work — data migration verified, production checks passed. Transition the ticket to Done and relay to the orchestrator:
+When a worker sends `DONE` without a preceding `PR_OPEN`, the task was marked fast-path by the orchestrator — trivial changes committed directly to the branch with no PR or review cycle. Transition the ticket straight to Done (step through intermediate statuses as needed) and relay to the orchestrator:
+
+```bash
+project prompt orchestrator "DONE — APP-XXXX (fast-path). <one-line summary from worker>"
+```
+
+Check the DAG for downstream unblocks, same as any completion.
+
+## DONE signal — post-merge verification
+
+When a worker sends `DONE` after a prior `PR_OPEN`, the worker has completed post-merge acceptance work — data migration verified, production checks passed. Transition the ticket to Done and relay to the orchestrator:
 
 ```bash
 project prompt orchestrator "DONE — APP-XXXX verified in production. <one-line summary>"
