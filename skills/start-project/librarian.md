@@ -112,7 +112,7 @@ project prompt orchestrator "COMPLETE — PR #N for APP-XXXX. Test brief: <if wo
 
 For follow-up PRs (worker sends another `COMPLETE` with a new PR number), repeat the same steps — the watcher adds the new PR to its watch list.
 
-## DONE signal — fast-path (no preceding PR_OPEN)
+## DONE signal — fast-path (no preceding COMPLETE)
 
 When a worker sends `DONE` without a preceding `COMPLETE`, the task was marked fast-path by the orchestrator — trivial changes committed directly to the branch with no PR or review cycle. Transition the ticket straight to Done (step through intermediate statuses as needed) and relay to the orchestrator:
 
