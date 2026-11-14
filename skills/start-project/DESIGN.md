@@ -1,5 +1,9 @@
 # Project Orchestration — Current State
 
+## Design principle
+
+Minimize context collapse by maximizing token quality with minimal extra token consumption. Every design choice — signal routing, role boundaries, durable artifacts, distill/restart — is evaluated against this.
+
 ## System overview
 
 Three skills, global (`~/.claude/skills/`):

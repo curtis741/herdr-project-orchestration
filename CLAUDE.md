@@ -2,6 +2,10 @@
 
 Multi-agent project orchestration, packaged as a Herdr plugin. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.).
 
+## Design principle
+
+Minimize context collapse by maximizing token quality with minimal extra token consumption. Every design choice — signal routing, role boundaries, durable artifacts, distill/restart — is evaluated against this. If a change doesn't improve token quality or reduce token waste, it probably doesn't belong.
+
 ## Repo layout
 
 ```
@@ -23,7 +27,19 @@ docs/
   design.md                 # What the system is and how it works
   decisions.md              # Why: key decisions, open questions, feedback log
   roadmap.md                # What's next, short/medium term, ideas
+  dogfood.md                # Dogfood mode: run orchestration on itself without a tracker
+  dogfood/tasks/            # Ephemeral task files for dogfood runs (gitignored)
 ```
+
+## Running a project
+
+Start a project with `/start-project <epic-key>` in a Claude Code session.
+
+### Dogfood mode
+
+When the epic key starts with `DOG-`, the orchestrator runs in **dogfood mode** — no external tracker, no PRs. Tasks are markdown files on disk, changes merge per-wave through a review branch. See `docs/dogfood.md` for the full protocol.
+
+Use this when testing orchestration changes on this repo, or when a tracker isn't worth the overhead.
 
 ## How to refine skills
 
