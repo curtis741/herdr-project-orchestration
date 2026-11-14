@@ -108,7 +108,7 @@ herdr agent start librarian --kind claude --pane <pane_id>
 Boot the librarian with a minimal identity prompt. `project register` writes the state file and signals READY to you automatically:
 
 ```bash
-herdr agent prompt <pane_id> "<epic-summary> — librarian.
+herdr agent prompt <pane_id> "Project librarian.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
 
@@ -145,7 +145,7 @@ herdr agent start watcher --kind claude --pane <pane_id>
 Boot the watcher:
 
 ```bash
-herdr agent prompt <pane_id> "<epic-summary> — watcher.
+herdr agent prompt <pane_id> "Project watcher.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'watcher'.
 
@@ -177,7 +177,7 @@ herdr agent start researcher --kind claude --pane <pane_id>
 Boot the researcher with a minimal identity prompt:
 
 ```bash
-herdr agent prompt <pane_id> "<epic-summary> — researcher.
+herdr agent prompt <pane_id> "Project researcher.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'researcher'.
 
