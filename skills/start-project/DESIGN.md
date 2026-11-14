@@ -13,7 +13,7 @@ Three skills, global (`~/.claude/skills/`):
 | `start-project` | `start-project/SKILL.md` | Orchestrator — project tickets → DAG → workers |
 | `project-worker` | `project-worker/SKILL.md` | Implementer — one ticket, full context |
 | `librarian` | `start-project/librarian.md` | Knowledge base — merged diffs, ticket transitions, answers questions |
-| *(project-researcher)* | *(not yet a skill)* | Long-lived domain researcher — answers questions, accumulates context |
+| `researcher` | `start-project/researcher.md` | Two-phase domain researcher — discovery then queryable, findings in research.md |
 | `project-tester` | `project-tester/SKILL.md` | Ephemeral API tester — fresh context, talks directly to worker |
 
 ## Agent interaction model
@@ -139,14 +139,6 @@ The orchestrator stays lightweight: it reads the ticket tracker, manages the DAG
 
 ## Known gaps
 
-### No research phase
-
-The orchestrator assumes an epic already has child tickets with descriptions and dependency links. When an epic has no children — or the children lack enough detail for a worker to implement — the orchestrator can't run.
-
-Today this is handled by an interactive session before `/start-project`: read the epic, read cross-repo code, ask the user to resolve open items, then create child tickets with `Blocks` links. A dedicated `project-researcher` skill would formalize this.
-
-First observed in practice: an epic was well-scoped but had zero children and several open items. Cross-repo code reading revealed implementation details the epic didn't cover, and the user corrected data-source assumptions the code alone couldn't settle.
-
 ## Design decisions
 
 ### Worker reuse is librarian-advised
@@ -160,6 +152,14 @@ After a PR merges and the librarian ingests: remove the worktree (`herdr worktre
 ### Orchestrator reboot mid-epic
 
 Herdr agents (librarian, researcher, workers) survive across orchestrator sessions — they're independent processes. A fresh orchestrator rebuilds state from the project state file (`project roster`, `project status`) and the librarian. The state file persists agent entries even after `project stop`, so all pane IDs and session IDs are recoverable. See `start-project/SKILL.md` § Restart recovery for the procedure.
+
+### Researcher two-phase model with durable artifact
+
+The researcher operates in two phases: Discovery (front-loaded, high-context) maps the system end-to-end and writes findings to `~/.herdr/projects/<project>/research.md`. Ongoing (lighter, queryable) answers questions from the existing map and only investigates when the map is incomplete.
+
+The durable artifact (research.md) serves two purposes: it lets the researcher answer questions without re-investigating, and it survives context restarts. When the researcher's context degrades, the orchestrator can restart it cleanly — the new instance loads research.md and resumes in Phase 2 without losing prior work. This is the distill/restart pattern: the artifact captures the value, the context window is disposable.
+
+Sections (Current Model, Subtask Notes, Open Questions, Rejected Hypotheses, Evidence) are designed so the researcher and workers can find what they need without reading the whole file. Rejected Hypotheses prevents re-investigation of dead ends across restarts.
 
 ### Release detection (not yet implemented)
 
@@ -207,7 +207,7 @@ The orchestrator's reboot-recovery procedure is in `start-project/SKILL.md` § R
 - **Signal economy** — every signal burns tokens in both sender and receiver. Route lifecycle events through one agent (the librarian) rather than fanning out. The orchestrator gets compact relays, not raw detail.
 - Max 3 concurrent workers
 - Workers don't spawn sub-agents — escalate to orchestrator
-- Librarian, watcher, and researcher are long-lived — all stay up for the life of the project. Librarian and researcher are on-demand (idle is their correct steady state). The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
+- Librarian, watcher, and researcher are long-lived — all stay up for the life of the project. Librarian and researcher are on-demand (idle is their correct steady state). The researcher can be cleanly restarted when context degrades — research.md carries forward. The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
 - Librarian ingests merged PRs and research findings
 - All PRs opened as drafts
 - Never force-push
