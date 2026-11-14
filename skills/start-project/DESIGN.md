@@ -51,7 +51,7 @@ Tester ──findings──> Orchestrator ──"fix these"──> Worker
 
 Two commands via the `project` CLI (`~/.local/bin/project`), which resolves roles to pane IDs from a shared state file. No agent names to hallucinate, no `herdr agent list` to parse.
 
-- **`project prompt`** — fire a signal, don't need the reply (STARTING, DONE, BLOCKED, SCOPE, assignments, merge notifications)
+- **`project prompt`** — fire a signal, don't need the reply (STARTING, DONE, BLOCKED, SCOPE, DISTILL, assignments, merge notifications)
 - **`project ask`** — send a question, wait for the agent to finish, print its pane output to stdout so the caller gets the answer in context
 
 Examples:
@@ -201,6 +201,38 @@ On restart, `project roster` and `project status` show all agents (including sto
 Session IDs in the state file enable cross-time queries: a wave-2 worker can `--resume` or `SendMessage` a finished wave-1 worker's session when the librarian's summary isn't enough.
 
 The orchestrator's reboot-recovery procedure is in `start-project/SKILL.md` § Reboot recovery.
+
+### Knowledge pressure and distill
+
+Agents degrade silently as their context fills with tool output, dead-end debugging, and accumulated noise. The distill mechanism lets any agent self-report context pressure before quality drops.
+
+**Signal flow:**
+```
+Agent → orchestrator: DISTILL — <reason>
+Orchestrator decides: approve or defer
+If approve:
+  Orchestrator → agent: DISTILL_ACK — write state, signal DISTILL_READY
+  Agent commits WIP (if applicable), writes DISTILL.md with current state
+  Agent → orchestrator: DISTILL_READY
+  Orchestrator stops agent, restarts fresh (not --resume), sends original assignment + distill state
+If defer:
+  Orchestrator → agent: DISTILL_DEFER — finish current step first
+```
+
+**Key design choices:**
+- DISTILL goes directly to the orchestrator, not through the librarian. It's an operational signal about agent health, not a lifecycle event. The librarian doesn't need to know or act on it.
+- Restart is fresh, not `--resume`. The point is clean context — `--resume` would carry the noise forward.
+- The agent writes its own state summary. It knows what matters from its context; the orchestrator just shuttles it to the fresh session.
+- Workers commit WIP before distilling so no code is lost. The fresh session picks up from the committed state.
+
+**When agents should request distill:**
+- Context is noticeably full (responses getting slower, tool output accumulating)
+- Repeated mistakes or going in circles on something that was clear earlier
+- Large volume of noise from debugging, failed approaches, or verbose tool output
+
+**When agents should NOT request distill:**
+- Close to finishing (one or two steps left)
+- The noise is from useful context they'll need again (e.g. a librarian's merged diff summaries)
 
 ## Constraints
 

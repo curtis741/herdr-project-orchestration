@@ -47,7 +47,7 @@ Workers start scoped to the repo root (shared memory, session list) and `cd` int
 
 Two commands via the `project` CLI, which resolves roles to pane IDs from a shared state file. No agent names to hallucinate, no `herdr agent list` to parse.
 
-- **`project prompt`** — fire a signal, don't need the reply (STARTING, PR_OPEN, DONE, BLOCKED, SCOPE, assignments, merge notifications)
+- **`project prompt`** — fire a signal, don't need the reply (STARTING, PR_OPEN, DONE, BLOCKED, SCOPE, DISTILL, assignments, merge notifications)
 - **`project ask`** — send a question, wait for the agent to finish, print its pane output to stdout so the caller gets the answer in context
 
 ### Signal protocol
@@ -64,6 +64,8 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 | `CI GREEN` | Watcher → Librarian | PR passed CI |
 | `CI FAILED` | Watcher → Worker | CI failure with structured details |
 | `SCOPE` | Worker → Orchestrator | Found work outside ticket scope |
+| `DISTILL` | Any agent → Orchestrator | Context is noisy, requesting distill/restart |
+| `DISTILL_READY` | Agent → Orchestrator | Durable state written, ready for restart |
 
 ## Responsibility boundaries
 

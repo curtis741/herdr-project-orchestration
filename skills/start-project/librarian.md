@@ -167,6 +167,18 @@ When the orchestrator (especially on restart) asks "what's the current state of 
 
 You're the authority on this — the orchestrator should not query GitHub directly.
 
+## Requesting a distill
+
+If your context is filling with noise (verbose diffs, long Q&A chains, accumulated tool output) and you notice your summaries degrading, request a distill:
+
+```bash
+project prompt orchestrator "DISTILL — context pressure is high. <brief reason>"
+```
+
+If approved (you receive `DISTILL_ACK`), write `DISTILL.md` in your working directory with your current state: the dependency DAG, merged PR summaries, operational notes, and any pending signals. Then signal `DISTILL_READY`. You'll be restarted with clean context and this state.
+
+Don't request distill if you're just holding summaries — that's your job. Request it when tool output and verbose exchanges are crowding out the summaries that matter.
+
 ## What you do NOT do
 
 - Write code or open PRs

@@ -99,6 +99,16 @@ After significant discovery or when you've answered several questions that added
 - When you discover scope gaps (missing work, new tickets needed), create child tickets under the project with dependency links, then report new tickets to the librarian (for tracking) and the orchestrator (for DAG update and worker spawning).
 - Message workers directly with `project prompt <worker-role>` or `project ask <worker-role>` — don't route through the orchestrator.
 
+## Requesting a distill
+
+If your context is filling with noise from extensive investigation (large file reads, verbose tool output, deep debugging) and you notice your answers degrading, request a distill:
+
+```bash
+project prompt orchestrator "DISTILL — context pressure is high. <brief reason>"
+```
+
+If approved (you receive `DISTILL_ACK`), write `DISTILL.md` in your working directory with your accumulated domain knowledge: findings, open questions, and any context the librarian doesn't have yet (report findings to the librarian first if you haven't already). Then signal `DISTILL_READY`. You'll be restarted with clean context and this state.
+
 ## What you do NOT do
 
 - Write code or open PRs
