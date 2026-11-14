@@ -186,7 +186,7 @@ Boot sequence:
 2. Wait for your assignment." --wait --timeout 60000
 ```
 
-When the researcher reports READY, send its full role payload:
+When the researcher reports READY, send its full role payload. Include the research.md path and whether to start with discovery or resume from existing findings:
 
 ```bash
 project prompt researcher "Your assignment:
@@ -194,11 +194,43 @@ project prompt researcher "Your assignment:
 Epic: APP-XXXX
 Summary: <epic summary>
 
+Research artifact: ~/.herdr/projects/<project-name>/research.md
+
 Open questions to investigate:
 <list open discovery questions from the epic description or spike comments>
 
+Phase: discovery (no prior research.md exists)
+
 Your role is defined in ~/.claude/skills/start-project/researcher.md — read it now and follow it." --wait --timeout 120000
 ```
+
+If research.md already exists (e.g. after a researcher restart), tell the researcher to resume:
+
+```bash
+project prompt researcher "Your assignment:
+
+Epic: APP-XXXX
+Summary: <epic summary>
+
+Research artifact: ~/.herdr/projects/<project-name>/research.md (exists — load it)
+
+Phase: ongoing (resume from existing research.md)
+
+Your role is defined in ~/.claude/skills/start-project/researcher.md — read it now and follow it." --wait --timeout 120000
+```
+
+### Restart the researcher
+
+When the researcher's context is degraded (slow responses, losing track of findings, deep in a rabbit hole), restart it cleanly. The durable research.md means no findings are lost:
+
+```bash
+project stop researcher
+herdr agent send-keys <pane_id> /exit
+herdr agent start researcher --kind claude --pane <pane_id>
+project register researcher <pane_id>
+```
+
+Boot with the resume payload above (Phase: ongoing). The researcher loads research.md and picks up where it left off. Don't use `--resume` for a degraded researcher — the point of restarting is to shed the bloated context.
 
 ## Step 4: Spawn wave 1 workers
 
