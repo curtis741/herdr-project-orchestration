@@ -312,7 +312,7 @@ cmd_prompt() {
     READY\ *|READY)           signal_type="READY" ;;
     STARTING\ *)              signal_type="STARTING" ;;
     DONE\ *)                  signal_type="DONE" ;;
-    PR_OPEN\ *)               signal_type="PR_OPEN" ;;
+    COMPLETE\ *)               signal_type="COMPLETE" ;;
     BLOCKED\ *)               signal_type="BLOCKED" ;;
     SCOPE\ *)                 signal_type="SCOPE" ;;
     NEED\ *)                  signal_type="NEED" ;;

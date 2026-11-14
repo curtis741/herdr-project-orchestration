@@ -107,7 +107,7 @@ Everything else is the same: store summaries, answer worker questions, detect un
 
 | Normal mode | Dogfood mode |
 |-------------|-------------|
-| Worker → librarian: `PR_OPEN` | Worker → librarian: `DONE — DOG-XXX. <summary of changes>` |
+| Worker → librarian: `COMPLETE` | Worker → librarian: `DONE — DOG-XXX. <summary of changes>` |
 | Librarian → watcher: `WATCH PR #N` | No watcher needed (no CI to monitor) |
 | Librarian transitions ticket | Worker updates task file status |
 | Orchestrator merges PR | Merge-reviewer merges wave branch |

@@ -1,6 +1,6 @@
 ---
 name: dry-run-project
-description: "Dry-run the project orchestration signal protocol without a tracker, code changes, or PRs. Spawns a librarian, watcher, and two workers in a test workspace, walks through the full signal cycle (READY → STARTING → PR_OPEN → unblock → second worker), and reports which signals landed and which didn't. Use when refining project-orchestration skills. Requires Herdr."
+description: "Dry-run the project orchestration signal protocol without a tracker, code changes, or PRs. Spawns a librarian, watcher, and two workers in a test workspace, walks through the full signal cycle (READY → STARTING → COMPLETE → unblock → second worker), and reports which signals landed and which didn't. Use when refining project-orchestration skills. Requires Herdr."
 ---
 
 # dry-run-project — Signal Protocol Test
@@ -65,9 +65,9 @@ Signal protocol — when you receive each signal, respond with exactly this form
 
 Signals you'll receive:
   STARTING — FAKE-001  →  respond: [librarian] ACK STARTING — FAKE-001 transitioned to In Progress
-  PR_OPEN — PR #1 for FAKE-001  →  respond: [librarian] ACK PR_OPEN — FAKE-001 transitioned to In Code Review. Then:
+  COMPLETE — PR #1 for FAKE-001  →  respond: [librarian] ACK COMPLETE — FAKE-001 transitioned to In Code Review. Then:
     project prompt watcher 'WATCH — PR #1 for FAKE-001, report failures to fake-001'
-    project prompt orchestrator 'PR_OPEN — PR #1 for FAKE-001.'
+    project prompt orchestrator 'COMPLETE — PR #1 for FAKE-001.'
   PR #1 merged for FAKE-001  →  respond: [librarian] ACK MERGED — FAKE-001 transitioned to Done. Then check the DAG: FAKE-002 is now unblocked. Message the orchestrator:
     project prompt orchestrator 'UNBLOCKED — FAKE-002 is now unblocked (blocker FAKE-001 merged). Ready for a worker.'
 
@@ -129,7 +129,7 @@ Signal protocol — send these signals in order, waiting 5 seconds between each:
 2. Wait for the orchestrator to send your assignment.
 3. When you receive the assignment: project prompt librarian 'STARTING — FAKE-001'
 4. Wait 5 seconds (simulating work).
-5. project prompt librarian 'PR_OPEN — PR #1 for FAKE-001. No operational notes (dry run).'
+5. project prompt librarian 'COMPLETE — PR #1 for FAKE-001. No operational notes (dry run).'
 6. Stop completely. Do not invent additional steps or repeat the protocol.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'fake-001'.
@@ -156,10 +156,10 @@ After sending the assignment, the expected sequence is:
 
 1. **fake-001 → librarian:** `STARTING — FAKE-001`
 2. **librarian → you:** `[librarian] ACK STARTING — FAKE-001 transitioned to In Progress`
-3. **fake-001 → librarian:** `PR_OPEN — PR #1 for FAKE-001`
+3. **fake-001 → librarian:** `COMPLETE — PR #1 for FAKE-001`
 4. **librarian → watcher:** `WATCH — PR #1 for FAKE-001, report failures to fake-001`
-5. **librarian → you:** `PR_OPEN — PR #1 for FAKE-001.` (librarian relay)
-6. **librarian → you:** `[librarian] ACK PR_OPEN — FAKE-001 transitioned to In Code Review`
+5. **librarian → you:** `COMPLETE — PR #1 for FAKE-001.` (librarian relay)
+6. **librarian → you:** `[librarian] ACK COMPLETE — FAKE-001 transitioned to In Code Review`
 
 Verify with:
 
@@ -207,7 +207,7 @@ Same protocol as fake-001:
 2. Wait for assignment.
 3. On assignment: project prompt librarian 'STARTING — FAKE-002'
 4. Wait 5 seconds.
-5. project prompt librarian 'PR_OPEN — PR #2 for FAKE-002. No operational notes (dry run).'
+5. project prompt librarian 'COMPLETE — PR #2 for FAKE-002. No operational notes (dry run).'
 6. Stop completely. Do not invent additional steps.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'fake-002'.
@@ -236,15 +236,15 @@ Signal Protocol Dry Run — Results
   worker-a READY → orchestrator     [ PASS / FAIL ]
   worker-a STARTING → librarian     [ PASS / FAIL ]
   librarian ACK STARTING            [ PASS / FAIL ]
-  worker-a PR_OPEN → librarian       [ PASS / FAIL ]
+  worker-a COMPLETE → librarian       [ PASS / FAIL ]
   librarian WATCH → watcher          [ PASS / FAIL ]
-  librarian PR_OPEN relay → orchestrator [ PASS / FAIL ]
+  librarian COMPLETE relay → orchestrator [ PASS / FAIL ]
   merge signal → librarian           [ PASS / FAIL ]
   librarian UNBLOCKED → orchestrator [ PASS / FAIL ]
   worker-b READY → orchestrator     [ PASS / FAIL ]
   worker-b STARTING → librarian     [ PASS / FAIL ]
-  worker-b PR_OPEN → librarian      [ PASS / FAIL ]
-  librarian PR_OPEN relay → orchestrator [ PASS / FAIL ]
+  worker-b COMPLETE → librarian      [ PASS / FAIL ]
+  librarian COMPLETE relay → orchestrator [ PASS / FAIL ]
   final merge → librarian           [ PASS / FAIL ]
   DAG complete detection             [ PASS / FAIL ]
 
@@ -261,9 +261,9 @@ herdr workspace close <workspace-id>
 
 - Agent boot and READY handshake
 - `project prompt` role resolution (no agent name hallucination)
-- Worker → librarian lifecycle signals (STARTING, PR_OPEN)
+- Worker → librarian lifecycle signals (STARTING, COMPLETE)
 - Librarian → watcher WATCH assignment
-- Librarian → orchestrator PR_OPEN relay (workers don't signal orchestrator directly)
+- Librarian → orchestrator COMPLETE relay (workers don't signal orchestrator directly)
 - Orchestrator → librarian merge notification
 - Librarian DAG tracking and auto-unblock detection
 - Librarian → orchestrator UNBLOCKED signal

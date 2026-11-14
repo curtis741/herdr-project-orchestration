@@ -28,9 +28,9 @@ Project Workspace (one Herdr workspace, all roles as tabs)
   ├── Worker B tab (repo root, cds into .worktrees/<ticket-b>/)
   └── Worker C tab (repo root, cds into .worktrees/<ticket-c>/)
 
-Workers ──STARTING/PR_OPEN──> Librarian (ticket transitions + operational notes)
+Workers ──STARTING/COMPLETE──> Librarian (ticket transitions + operational notes)
 Workers ──DONE──> Librarian (post-merge verification only)
-Librarian ──PR_OPEN relay──> Orchestrator (compact: PR#, ticket, test brief)
+Librarian ──COMPLETE relay──> Orchestrator (compact: PR#, ticket, test brief)
 Librarian ──DONE relay──> Orchestrator (post-merge verification complete)
 Librarian ──WATCH──> Watcher (PR# + worker role to report to)
 Watcher ──CI failures──> Worker (direct, structured failure reports)
@@ -56,7 +56,7 @@ Two commands via the `project` CLI (`~/.local/bin/project`), which resolves role
 
 Examples:
 
-- **Worker → Librarian:** `project prompt librarian "PR_OPEN — PR #N for APP-XXXX. <operational notes>"`
+- **Worker → Librarian:** `project prompt librarian "COMPLETE — PR #N for APP-XXXX. <operational notes>"`
 - **Worker → Orchestrator:** `project prompt orchestrator "BLOCKED — <reason>"`
 - **Orchestrator → Librarian:** `project prompt librarian "APP-XXXX PR #N was just merged. Ingest the diff."`
 - **Worker → Librarian (needs answer):** `project ask librarian "What interfaces did APP-YYYY introduce?"`
@@ -83,7 +83,7 @@ The librarian manages the full ticket lifecycle via signals from workers and the
 | Signal | From | Librarian transitions to |
 |--------|------|--------------------------|
 | `STARTING — APP-XXXX` | Worker | In Progress |
-| `PR_OPEN — PR #N for APP-XXXX` | Worker | In Code Review |
+| `COMPLETE — PR #N for APP-XXXX` | Worker | In Code Review |
 | `DONE — APP-XXXX verified` | Worker | Done (post-merge verification) |
 | `PR #N merged for APP-XXXX` | Orchestrator | Acceptance Test or Done |
 | Research complete | Research agent | Closes spike ticket |
@@ -173,8 +173,8 @@ The tester is an optional fourth role, spawned by the orchestrator when a worker
 
 Interaction model:
 ```
-Worker ──PR_OPEN + test brief──> Librarian
-Librarian ──PR_OPEN relay + test brief──> Orchestrator
+Worker ──COMPLETE + test brief──> Librarian
+Librarian ──COMPLETE relay + test brief──> Orchestrator
 Orchestrator ──spawns──> Tester (fresh context, no implementation knowledge)
 Tester ──findings──> Orchestrator
 Orchestrator ──"fix these"──> Worker

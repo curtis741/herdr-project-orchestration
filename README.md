@@ -45,7 +45,7 @@ When you run `herdr plugin update`, the plugin directory updates in place and al
 
    ```bash
    # Fire-and-forget signal
-   project prompt librarian "PR_OPEN — PR #42 for APP-1234"
+   project prompt librarian "COMPLETE — PR #42 for APP-1234"
 
    # Ask a question and get the reply in stdout
    project ask librarian "What interfaces did APP-1001 introduce?"
@@ -196,7 +196,7 @@ Workers and the librarian communicate through structured signals:
 |--------|-----------|---------|
 | `READY` | Worker → Orchestrator | Worker booted, waiting for assignment |
 | `STARTING` | Worker → Librarian | Triggers ticket transition to In Progress |
-| `PR_OPEN` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
+| `COMPLETE` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
 | `DONE` | Worker → Librarian | Post-merge verification complete (optional); librarian transitions to Done |
 | `BLOCKED` | Worker → Orchestrator | Escalates to user |
 | `UNBLOCKED` | Librarian → Orchestrator | Dependency cleared, ready for next worker |
