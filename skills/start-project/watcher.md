@@ -68,6 +68,16 @@ Use `ScheduleWakeup` to pace your checks:
 - All pending, no failures: check again in 120 seconds
 - No PRs on watch list: check again in 300 seconds (idle heartbeat)
 
+## Requesting a distill
+
+If your context is filling with verbose CI logs and you notice degraded performance, request a distill:
+
+```bash
+project prompt orchestrator "DISTILL — context pressure is high. <brief reason>"
+```
+
+If approved (you receive `DISTILL_ACK`), write `DISTILL.md` in your working directory with your current watch list (PR numbers, worker roles, CI status). Then signal `DISTILL_READY`. You'll be restarted with clean context and this state.
+
 ## What you don't do
 
 - **Don't fix code** — workers own their fixes

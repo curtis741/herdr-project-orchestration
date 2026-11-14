@@ -11,7 +11,7 @@ You are a worker agent assigned to a single ticket as part of a larger project. 
 
 Two commands for agent communication:
 
-- **`project prompt <role> <message>`** — fire a signal, don't need the answer (STARTING, PR_OPEN, DONE, SCOPE, BLOCKED)
+- **`project prompt <role> <message>`** — fire a signal, don't need the answer (STARTING, PR_OPEN, DONE, SCOPE, BLOCKED, DISTILL)
 - **`project ask <role> <question>`** — ask a question, get the reply printed to stdout (librarian queries, dependency lookups)
 
 Your boot prompt tells you your role name (e.g. `alpha`, `bravo`). Other roles you can always reach: `orchestrator`, `librarian`, `researcher`. The orchestrator's assignment tells you about other workers when relevant.
@@ -200,6 +200,30 @@ Use `project prompt <role> <message>` to message any agent directly — don't ju
 - **Blocked on a decision:** `project prompt orchestrator "BLOCKED — <reason>"` — it escalates to the user.
 - **CI is failing:** The watcher monitors your PRs and reports CI failures to you directly. Fix the issue, push, and the watcher will recheck. If the watcher hasn't reported a failure but you notice one, fix and push — the watcher will pick up the new status.
 - **Related work you discover:** Use judgment based on PR blast radius. A small fix that unblocks your ticket (adding a gem, fixing a broken helper) — just do it, mention it in the PR. A separate unit of work that would double the diff (moving controllers, refactoring a shared service) — `project prompt orchestrator "SCOPE — <explanation>"` and let it route the work to a follow-up ticket or another worker.
+
+## Requesting a distill
+
+If your context is getting noisy — responses are slowing down, you're repeating mistakes, or tool output has accumulated heavily — request a distill:
+
+```bash
+project prompt orchestrator "DISTILL — context pressure is high. <brief reason: e.g. 'heavy debugging output from test failures'>"
+```
+
+The orchestrator will either approve (you write your state and get restarted with clean context) or defer (you're close to finishing — keep going).
+
+**If approved (you receive `DISTILL_ACK`):**
+
+1. Commit any WIP code with a `[WIP]` prefix
+2. Write `DISTILL.md` in your worktree root with:
+   - What's done (commits made, files changed)
+   - What's left (remaining steps)
+   - Current approach and key decisions
+   - Anything the librarian doesn't know (local context, debugging findings)
+3. Signal: `project prompt orchestrator "DISTILL_READY — state written to DISTILL.md"`
+
+You'll be restarted with clean context and your original assignment plus the distill state.
+
+**Don't request distill** if you're one or two steps from finishing — push through instead.
 
 ## Worktree escape (user-initiated only)
 

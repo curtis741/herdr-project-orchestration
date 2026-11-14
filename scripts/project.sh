@@ -317,6 +317,8 @@ cmd_prompt() {
     SCOPE\ *)                 signal_type="SCOPE" ;;
     NEED\ *)                  signal_type="NEED" ;;
     RESEARCH\ *)              signal_type="RESEARCH" ;;
+    DISTILL\ *)               signal_type="DISTILL" ;;
+    DISTILL_READY\ *)         signal_type="DISTILL_READY" ;;
   esac
 
   log_signal "${caller:-unknown}" "$role" "$signal_type" "$message"

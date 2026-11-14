@@ -283,6 +283,42 @@ The watcher handles CI monitoring — the librarian already told it to watch the
 
 When the librarian relays a `DONE` signal (post-merge verification complete), notify the user: `[start-project] APP-1001 verified in production — done.`
 
+### DISTILL requests
+
+Any agent can send `DISTILL — <reason>` when its context is getting noisy and output quality is degrading. When you receive one, decide:
+
+**Defer** — if the agent is close to finishing (e.g. worker has opened a PR and is just waiting on CI), tell it to finish first:
+
+```bash
+project prompt <role> "DISTILL_DEFER — finish your current step, then re-request if needed"
+```
+
+**Approve** — if the agent has significant work remaining and context pressure is real:
+
+```bash
+project prompt <role> "DISTILL_ACK — commit any WIP, write your state to DISTILL.md in your working directory, then signal DISTILL_READY"
+```
+
+When you receive `DISTILL_READY` from the agent:
+
+1. Read the agent's distill file to capture its state
+2. Stop the agent: `project stop <role>`
+3. Restart it fresh (not `--resume` — the whole point is clean context):
+   ```bash
+   herdr agent start <role> --kind claude --pane <pane_id>
+   ```
+4. Re-register: `project register <role> <pane_id>`
+5. Send the agent its original assignment plus the distill context:
+   ```bash
+   project prompt <role> "Resuming after distill. Your original assignment:
+   <original ticket/role assignment>
+
+   State from your previous session:
+   <contents of DISTILL.md>"
+   ```
+
+The distill file is the agent's own summary of where it left off — what's done, what's left, current approach, decisions made. The agent writes it; you consume it and pass it to the fresh session.
+
 ## Step 5a: Spawn tester (API / parity work only)
 
 When a worker's DONE signal includes a test brief, spawn an independent tester agent. The tester and worker talk directly — you just set up the introduction.
