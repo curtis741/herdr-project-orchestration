@@ -89,7 +89,27 @@ Register yourself (the orchestrator):
 project register orchestrator
 ```
 
-All tabs you create below get `--env HERDR_PROJECT=<project-name>` so every agent resolves the same state file automatically. Communication uses `project prompt <role>` (fire-and-forget signals) or `project ask <role>` (questions that need an answer back).
+All tabs you create below get `--env HERDR_PROJECT=<project-name>` so every agent resolves the same state file automatically.
+
+### Communication commands
+
+Three commands, each with different blocking behavior:
+
+| Command | Blocks? | Use for |
+|---------|---------|---------|
+| `project prompt <role> <msg>` | No | Task assignments, merge notifications, lifecycle signals — anything where you don't need the response to proceed |
+| `project prompt --wait <role> <msg>` | Yes, until response or timeout | Boot prompts where you need READY confirmation before sending the assignment |
+| `project ask <role> <question>` | Yes, returns answer to stdout | Questions where you need the answer to make a decision |
+
+**Stay responsive.** The orchestrator must be available for incoming signals, user messages, and status checks at all times. Every `--wait` or `ask` blocks your context until the target responds or the timeout expires — use them only when you genuinely can't proceed without the response.
+
+- **Boot prompts** use `--wait` because the assignment must not arrive before the agent is listening. These are short waits (READY comes in seconds).
+- **Assignments and lifecycle signals** use plain `prompt` — the worker signals back (STARTING, PR_OPEN, BLOCKED) when it has something to report.
+- **Librarian/researcher queries** use `ask` when you need the answer to choose the next action (worker reuse, unblock decisions).
+
+**Anti-pattern: blocking on worker execution.** Never `--wait` on a worker assignment. The worker may take 10+ minutes to implement its ticket — during that time you can't respond to other workers, the user, or the librarian. Send the assignment with plain `prompt` and move on to the next worker or back to monitoring.
+
+Setup-phase `--wait` on support agent assignments (librarian, watcher, researcher) is fine — it's sequential initialization before the orchestrator enters its monitoring loop.
 
 ### Spawn the librarian
 
@@ -302,7 +322,7 @@ Description: <ticket description>
 
 Dependencies: <list any prior tickets this depends on, or 'none'>
 
-Run /project-worker to load your skill. It will guide you through implementation." --wait --timeout 300000
+Run /project-worker to load your skill. It will guide you through implementation."
 ```
 
 **Limit concurrency.** Start at most 3 workers simultaneously. Additional wave-1 tickets queue behind them — start the next queued ticket when a running worker completes.
