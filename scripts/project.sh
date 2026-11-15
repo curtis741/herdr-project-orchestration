@@ -42,6 +42,7 @@ Commands:
   log [--tail N]                   Print the signal log (default: last 50 entries)
   log-decision <decision-type> <payload>
                                    Log an orchestrator decision (wave transition, spawn, etc.)
+  check-in [--since <timestamp>]   Developer summary: what happened, what needs you
 
 Project name is auto-detected from $HERDR_PROJECT.
 Override with --project <name>.
@@ -588,6 +589,211 @@ cmd_log_decision() {
   echo "logged: DECISION:${decision_type}"
 }
 
+cmd_checkin() {
+  local since=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) shift; since="${1:-}"; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  local f
+  f="$(ensure_state)"
+  local name
+  name="$(read_field "$f" "project")"
+
+  # Determine cutoff: explicit --since > last check-in timestamp > beginning of time
+  local cutoff=""
+  if [[ -n "$since" ]]; then
+    cutoff="$since"
+  else
+    cutoff=$(jq -r '.last_checkin // empty' "$f")
+  fi
+
+  # Update last check-in timestamp
+  local now
+  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local tmp="${f}.tmp.$$"
+  jq --arg ts "$now" '.last_checkin = $ts' "$f" > "$tmp" && mv "$tmp" "$f"
+
+  echo "═══════════════════════════════════════════════════"
+  echo "  Project check-in: $name"
+  if [[ -n "$cutoff" ]]; then
+    echo "  Since: $cutoff"
+  else
+    echo "  Since: project start (first check-in)"
+  fi
+  echo "═══════════════════════════════════════════════════"
+  echo
+
+  # --- Agent status ---
+  echo "▸ Agent Status"
+  echo "────────────────────────────────────────────────"
+  local roles
+  roles=$(jq -r '.agents | keys[]' "$f")
+  local idle_agents=""
+  local blocked_agents=""
+  local working_agents=""
+  for role in $roles; do
+    local pane
+    pane="$(read_pane "$f" "$role")"
+    local is_stopped
+    is_stopped=$(jq -r --arg role "$role" '.agents[$role].stopped // false' "$f")
+    local ticket
+    ticket=$(jq -r --arg role "$role" '.agents[$role].current_ticket // "-"' "$f")
+    local status
+    if [[ "$is_stopped" == "true" ]]; then
+      status="stopped"
+    else
+      status=$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unreachable")
+    fi
+    printf "  %-16s %-12s ticket: %s\n" "$role" "[$status]" "$ticket"
+    case "$status" in
+      idle|done) idle_agents="${idle_agents:+$idle_agents }$role" ;;
+      working)   working_agents="${working_agents:+$working_agents }$role" ;;
+    esac
+  done
+  echo
+
+  # --- Signal activity ---
+  echo "▸ Recent Activity"
+  echo "────────────────────────────────────────────────"
+  local lf
+  lf="$(signals_file)"
+  if [[ -f "$lf" ]]; then
+    local signal_count=0
+    local blocked_signals=""
+    local done_signals=""
+    local scope_signals=""
+    while IFS=$'\t' read -r ts sender receiver sig_type payload; do
+      # Skip malformed lines (no valid timestamp)
+      [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || continue
+      if [[ -n "$cutoff" ]] && [[ "$ts" < "$cutoff" ]]; then
+        continue
+      fi
+      signal_count=$((signal_count + 1))
+      case "$sig_type" in
+        BLOCKED) blocked_signals="${blocked_signals}  ⚠ $sender: $payload\n" ; blocked_agents="${blocked_agents:+$blocked_agents }$sender" ;;
+        DONE|COMPLETE) done_signals="${done_signals}  ✓ $sender: $payload\n" ;;
+        SCOPE) scope_signals="${scope_signals}  ↗ $sender: $payload\n" ;;
+      esac
+    done < "$lf"
+
+    if [[ $signal_count -eq 0 ]]; then
+      echo "  No signals since last check-in."
+    else
+      echo "  $signal_count signal(s) since last check-in."
+      if [[ -n "$done_signals" ]]; then
+        echo
+        echo "  Completed:"
+        printf '%b' "$done_signals"
+      fi
+      if [[ -n "$blocked_signals" ]]; then
+        echo
+        echo "  Blocked:"
+        printf '%b' "$blocked_signals"
+      fi
+      if [[ -n "$scope_signals" ]]; then
+        echo
+        echo "  Scope changes:"
+        printf '%b' "$scope_signals"
+      fi
+    fi
+  else
+    echo "  No signal log found."
+  fi
+  echo
+
+  # --- Feedback ---
+  local proj_dir="$PROJECTS_DIR/$(resolve_project)"
+  local fb="$proj_dir/feedback.md"
+  if [[ -f "$fb" ]]; then
+    echo "▸ Feedback"
+    echo "────────────────────────────────────────────────"
+    if [[ -n "$cutoff" ]]; then
+      local fb_count=0
+      local fb_entries=""
+      local current_header="" current_body=""
+      while IFS= read -r line; do
+        if [[ "$line" =~ ^##\  ]]; then
+          if [[ -n "$current_header" && -n "$current_body" ]]; then
+            local header_ts
+            header_ts=$(echo "$current_header" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' || true)
+            if [[ -z "$header_ts" || "$header_ts" > "$cutoff" || "$header_ts" == "$cutoff" ]]; then
+              fb_entries="${fb_entries}  ${current_header}\n    ${current_body}\n"
+              fb_count=$((fb_count + 1))
+            fi
+          fi
+          current_header="${line## }"
+          current_body=""
+        elif [[ -n "$current_header" && -n "$line" ]]; then
+          current_body="$line"
+        fi
+      done < "$fb"
+      # Flush last entry
+      if [[ -n "$current_header" && -n "$current_body" ]]; then
+        local header_ts
+        header_ts=$(echo "$current_header" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' || true)
+        if [[ -z "$header_ts" || "$header_ts" > "$cutoff" || "$header_ts" == "$cutoff" ]]; then
+          fb_entries="${fb_entries}  ${current_header}\n    ${current_body}\n"
+          fb_count=$((fb_count + 1))
+        fi
+      fi
+      if [[ $fb_count -eq 0 ]]; then
+        echo "  No new feedback since last check-in."
+      else
+        echo "  $fb_count feedback entry/entries:"
+        printf '%b' "$fb_entries"
+      fi
+    else
+      local total
+      total=$(grep -c '^## ' "$fb" 2>/dev/null || echo "0")
+      echo "  $total total feedback entries. Use --since to filter."
+    fi
+    echo
+  fi
+
+  # --- Recommendations ---
+  echo "▸ Recommendations"
+  echo "────────────────────────────────────────────────"
+  local has_rec=false
+
+  # Deduplicate blocked agents
+  local unique_blocked=""
+  if [[ -n "$blocked_agents" ]]; then
+    unique_blocked=$(echo "$blocked_agents" | tr ' ' '\n' | sort -u | tr '\n' ' ')
+  fi
+
+  if [[ -n "$unique_blocked" ]]; then
+    has_rec=true
+    echo "  ⚠ Blocked agents need attention: $unique_blocked"
+  fi
+
+  if [[ -n "$idle_agents" ]]; then
+    for agent in $idle_agents; do
+      local agent_ticket
+      agent_ticket=$(jq -r --arg role "$agent" '.agents[$role].current_ticket // ""' "$f")
+      local agent_stopped
+      agent_stopped=$(jq -r --arg role "$agent" '.agents[$role].stopped // false' "$f")
+      if [[ "$agent_stopped" == "true" ]]; then
+        continue
+      fi
+      has_rec=true
+      if [[ -n "$agent_ticket" && "$agent_ticket" != "-" ]]; then
+        echo "  ⏸ $agent is idle but assigned to $agent_ticket — may need a kick or exit"
+      else
+        echo "  ⏹ $agent is idle with no ticket — consider stopping it"
+      fi
+    done
+  fi
+
+  if [[ "$has_rec" == false ]]; then
+    echo "  Nothing needs immediate attention."
+  fi
+  echo
+}
+
 cmd_resolve() {
   local role="${1:-}"
   if [[ -z "$role" ]]; then
@@ -662,5 +868,6 @@ case "$cmd" in
   file)       cmd_file ;;
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;
+  check-in)   cmd_checkin "$@" ;;
   *)          usage ;;
 esac
