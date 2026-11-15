@@ -42,6 +42,7 @@ Commands:
   log [--tail N]                   Print the signal log (default: last 50 entries)
   log-decision <decision-type> <payload>
                                    Log an orchestrator decision (wave transition, spawn, etc.)
+  recover                          Diagnose project state after restart — show what's resumable
 
 Project name is auto-detected from $HERDR_PROJECT.
 Override with --project <name>.
@@ -588,6 +589,152 @@ cmd_log_decision() {
   echo "logged: DECISION:${decision_type}"
 }
 
+cmd_recover() {
+  local f
+  f="$(ensure_state)"
+  local name
+  name="$(read_field "$f" "project")"
+  local ws
+  ws="$(read_field "$f" "workspace_id")"
+
+  echo "Recovery report for project: $name"
+  echo "═══════════════════════════════════════"
+  echo ""
+
+  # 1. Check workspace
+  echo "## Workspace"
+  if [[ -n "$ws" ]]; then
+    local ws_status
+    ws_status=$(herdr workspace get "$ws" 2>/dev/null | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null || true)
+    if [[ -n "$ws_status" ]]; then
+      echo "  workspace $ws: reachable"
+    else
+      echo "  workspace $ws: STALE (not found — needs new workspace)"
+    fi
+  else
+    echo "  no workspace ID recorded"
+  fi
+  echo ""
+
+  # 2. Check each agent: pane reachability, session availability
+  echo "## Agents"
+  printf '  %-16s %-10s %-10s %-10s %-12s %s\n' "ROLE" "PANE" "PANE_OK" "SESSION" "STATE" "TICKET"
+  echo "  ────────────────────────────────────────────────────────────────────────────"
+
+  local roles
+  roles=$(jq -r '.agents | keys[]' "$f")
+  local resumable_count=0
+  local stale_count=0
+
+  for role in $roles; do
+    local pane session is_stopped ticket
+    pane="$(read_pane "$f" "$role")"
+    session="$(read_session "$f" "$role")"
+    is_stopped=$(jq -r --arg role "$role" '.agents[$role].stopped // false' "$f")
+    ticket=$(jq -r --arg role "$role" '.agents[$role].current_ticket // "-"' "$f")
+
+    local pane_ok="?"
+    local state_label
+
+    if [[ "$is_stopped" == "true" ]]; then
+      state_label="stopped"
+      pane_ok="-"
+    else
+      # Check if the pane is still reachable
+      local agent_state
+      agent_state=$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // empty' 2>/dev/null || true)
+      if [[ -n "$agent_state" ]]; then
+        pane_ok="yes"
+        state_label="$agent_state"
+      else
+        pane_ok="STALE"
+        stale_count=$((stale_count + 1))
+        if [[ -n "$session" ]]; then
+          state_label="resumable"
+          resumable_count=$((resumable_count + 1))
+        else
+          state_label="lost"
+        fi
+      fi
+    fi
+
+    local session_short
+    if [[ -n "$session" ]]; then
+      session_short="${session:0:8}…"
+    else
+      session_short="-"
+    fi
+
+    printf '  %-16s %-10s %-10s %-10s %-12s %s\n' "$role" "$pane" "$pane_ok" "$session_short" "$state_label" "$ticket"
+  done
+  echo ""
+
+  # 3. Worktree status
+  echo "## Worktrees"
+  local repo_root
+  repo_root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||' || true)
+  if [[ -z "$repo_root" ]]; then
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  fi
+
+  if [[ -d "$repo_root/.worktrees" ]]; then
+    for wt in "$repo_root"/.worktrees/*/; do
+      local wt_name
+      wt_name=$(basename "$wt")
+      local branch
+      branch=$(git -C "$wt" branch --show-current 2>/dev/null || echo "detached/missing")
+      local ahead
+      ahead=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo "?")
+      local dirty=""
+      if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+        dirty=" (dirty)"
+      fi
+      echo "  $wt_name: branch=$branch, $ahead commits ahead of main${dirty}"
+    done
+  else
+    echo "  no .worktrees/ directory found"
+  fi
+  echo ""
+
+  # 4. Recent signal activity (last 10 entries by timestamp lines)
+  echo "## Last signals"
+  local lf
+  lf="$(signals_file)"
+  if [[ -f "$lf" ]]; then
+    printf '  %-20s %-14s %-14s %-10s %s\n' "TIMESTAMP" "SENDER" "RECEIVER" "TYPE" "PAYLOAD"
+    # Entries start with a timestamp (YYYY-MM-DD); extract only those lines
+    grep -E '^[0-9]{4}-[0-9]{2}-[0-9]{2}' "$lf" | tail -n 10 | while IFS=$'\t' read -r ts sender receiver sig_type payload; do
+      # Truncate long payloads to first line
+      payload="${payload%%$'\n'*}"
+      if [[ ${#payload} -gt 80 ]]; then
+        payload="${payload:0:77}..."
+      fi
+      printf '  %-20s %-14s %-14s %-10s %s\n' "$ts" "$sender" "$receiver" "$sig_type" "$payload"
+    done
+  else
+    echo "  no signal log found"
+  fi
+  echo ""
+
+  # 5. Recovery summary
+  echo "## Summary"
+  if [[ $stale_count -gt 0 ]]; then
+    echo "  $stale_count agent(s) have stale panes (restart/terminal closed)."
+    if [[ $resumable_count -gt 0 ]]; then
+      echo "  $resumable_count of those have session IDs and can be resumed with --resume."
+    fi
+    echo ""
+    echo "  Recovery steps:"
+    echo "    1. project register orchestrator"
+    echo "    2. For each resumable agent, create a new tab and resume:"
+    echo "       herdr tab create --workspace <ws> --cwd \"\$PWD\" --label \"<role>\" --env HERDR_PROJECT=$name --no-focus"
+    echo "       herdr agent start <role> --kind claude --pane <new-pane> -- --resume <session-id>"
+    echo "    3. Ask the librarian for ticket status once it's back"
+  else
+    echo "  All active agents are reachable. No recovery needed."
+  fi
+}
+
 cmd_resolve() {
   local role="${1:-}"
   if [[ -z "$role" ]]; then
@@ -662,5 +809,6 @@ case "$cmd" in
   file)       cmd_file ;;
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;
+  recover)    cmd_recover "$@" ;;
   *)          usage ;;
 esac

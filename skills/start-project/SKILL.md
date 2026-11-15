@@ -476,19 +476,49 @@ When all tickets are done and all PRs are merged:
 
 ## Reboot recovery
 
-If you're a fresh orchestrator session picking up a project after a reboot (computer restart, terminal closed), all pane IDs in the state file are stale but everything else is intact:
+If you're a fresh orchestrator session picking up a project after a reboot (computer restart, terminal closed), the system is designed to be resumable from durable state. All pane IDs are stale but everything needed to reconstruct the project lives on disk.
 
-1. Register yourself: `project register orchestrator`
-2. Run `project roster` — it shows every agent's session ID and last ticket, even stopped ones
-3. Recreate tabs and restart agents using their saved session IDs:
+### Minimal state for recovery
+
+Four sources, all durable:
+
+| Source | What it tells you |
+|--------|-------------------|
+| State file (`~/.herdr/projects/<name>.json`) | Agent roster, session IDs, ticket assignments, stopped/active flags |
+| Signal log (`~/.herdr/projects/<name>.signals.log`) | Full event sequence — who signaled what, when, in what order |
+| Git (branches + worktrees) | Work-in-progress code, which branches exist, what's committed |
+| Ticket tracker (or dogfood task files) | Ticket statuses — done, in-progress, todo |
+
+From these four sources, reconstruct: which wave, which tasks done/in-progress/blocked, which worktrees exist, and what the librarian knows.
+
+### Recovery procedure
+
+1. **Diagnose** — run `project recover` to get a structured report:
+   - Which agents are reachable vs. stale
+   - Which have session IDs (resumable) vs. not (need fresh start)
+   - Worktree status (branch, commits ahead, dirty state)
+   - Last 10 signals (what was happening when the system went down)
+
+2. **Register yourself:** `project register orchestrator`
+
+3. **Resume agents with session IDs** — priority order: librarian first (it has accumulated knowledge), then active workers:
    ```bash
-   herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=<project-name> --no-focus
-   herdr agent start librarian --kind claude --pane <new_pane_id> -- --resume <session-id-from-roster>
+   herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "<role>" --env HERDR_PROJECT=<project-name> --no-focus
+   herdr agent start <role> --kind claude --pane <new_pane_id> -- --resume <session-id>
    ```
    Each agent self-registers on boot, which updates its pane ID in the state file.
-4. Once the librarian is back, ask it: `project ask librarian "Orchestrator rebooted. What's the current state of all tickets?"`
-5. Fetch the project from the ticket tracker and rebuild the DAG (same as Step 1)
-6. Resume or spawn workers as needed based on ticket states
+
+4. **Reconstruct project state** — once the librarian is back:
+   ```bash
+   project ask librarian "Orchestrator rebooted. What's the current state of all tickets?"
+   ```
+
+5. **Rebuild the DAG** — fetch tickets from the tracker (same as Step 1) and cross-reference with the librarian's state
+
+6. **Resume or spawn workers** based on ticket states:
+   - In-progress tickets with resumable workers → resume with `--resume`
+   - In-progress tickets with lost workers → spawn fresh, send assignment + librarian context
+   - Unblocked tickets → spawn new workers
 
 Agents resumed with `--resume` retain their full context from the prior session — no need to re-send assignments.
 

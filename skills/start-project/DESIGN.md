@@ -149,9 +149,11 @@ The librarian proactively recommends reuse or fresh worker in its UNBLOCKED sign
 
 After a PR merges and the librarian ingests: remove the worktree (`herdr worktree remove --workspace <id>`) unless the worker has a next ticket in a sequential chain. The orchestrator handles this in Step 5.
 
-### Orchestrator reboot mid-epic
+### Recovery after restart
 
-Herdr agents (librarian, researcher, workers) survive across orchestrator sessions — they're independent processes. A fresh orchestrator rebuilds state from the project state file (`project roster`, `project status`) and the librarian. The state file persists agent entries even after `project stop`, so all pane IDs and session IDs are recoverable. See `start-project/SKILL.md` § Restart recovery for the procedure.
+The system is resumable from four durable sources: the project state file (agent roster, session IDs, ticket assignments), the signal log (full event sequence), git (branches + worktrees), and the ticket tracker. A fresh orchestrator runs `project recover` to diagnose what's reachable vs. stale, then resumes agents with `--resume <session-id>` from the state file. Agents resumed this way retain their full context — no re-assignment needed.
+
+Recovery priority: librarian first (accumulated knowledge is expensive to rebuild), then active workers. Workers with lost sessions get a fresh start with their assignment plus librarian context about prior work. See `start-project/SKILL.md` § Reboot recovery for the full procedure.
 
 ### Researcher two-phase model with durable artifact
 
