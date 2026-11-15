@@ -51,7 +51,7 @@ Tester ──findings──> Orchestrator ──"fix these"──> Worker
 
 Two commands via the `project` CLI (`~/.local/bin/project`), which resolves roles to pane IDs from a shared state file. No agent names to hallucinate, no `herdr agent list` to parse.
 
-- **`project prompt`** — fire a signal, don't need the reply (STARTING, DONE, BLOCKED, SCOPE, DISTILL, assignments, merge notifications)
+- **`project prompt`** — fire a signal, don't need the reply (STARTING, COMPLETE, DONE, BLOCKED, SCOPE, DISTILL, assignments, merge notifications)
 - **`project ask`** — send a question, wait for the agent to finish, print its pane output to stdout so the caller gets the answer in context
 
 Examples:
