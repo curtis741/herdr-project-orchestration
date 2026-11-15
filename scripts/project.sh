@@ -13,6 +13,57 @@ set -euo pipefail
 PROJECTS_DIR="$HOME/.herdr/projects"
 mkdir -p "$PROJECTS_DIR"
 
+# --- Auto-update check (never blocks) ---
+_update_check() {
+  local marker="$PROJECTS_DIR/.last-update-check"
+  local cache="$PROJECTS_DIR/.update-check-result"
+  local today
+  today="$(date +%Y-%m-%d)"
+
+  # Phase 1: surface any cached result from a previous background check
+  if [[ -f "$cache" ]]; then
+    local msg
+    msg="$(cat "$cache")"
+    if [[ -n "$msg" ]]; then
+      echo "$msg" >&2
+    fi
+    rm -f "$cache"
+  fi
+
+  # Phase 2: if we already checked today, skip
+  if [[ -f "$marker" ]] && [[ "$(cat "$marker")" == "$today" ]]; then
+    return
+  fi
+
+  # Write today's date so concurrent invocations don't all spawn checks
+  echo "$today" > "$marker"
+
+  # Background: compare installed SHA with remote HEAD
+  (
+    local plugin_info
+    plugin_info=$(herdr plugin list 2>/dev/null) || exit 0
+    local entry
+    entry=$(echo "$plugin_info" | grep 'project-orchestration' | grep 'github:') || exit 0
+    local installed_sha
+    installed_sha=$(echo "$entry" | grep -oE '@[0-9a-f]+' | tr -d '@') || exit 0
+    local repo_ref
+    repo_ref=$(echo "$entry" | grep -oE 'github:[^@]+' | sed 's/github://') || exit 0
+    local owner="${repo_ref%%/*}"
+    local repo="${repo_ref#*/}"
+
+    local remote_sha
+    remote_sha=$(git ls-remote "https://github.com/$owner/$repo.git" HEAD 2>/dev/null \
+      | awk '{print $1}') || exit 0
+
+    if [[ -n "$remote_sha" && -n "$installed_sha" && "$remote_sha" != "$installed_sha" ]]; then
+      echo "project: plugin update available — run 'herdr plugin update' to get the latest" > "$cache"
+    fi
+  ) &>/dev/null &
+  disown
+}
+
+_update_check
+
 # NATO phonetic alphabet for worker names
 WORKER_NAMES=(alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu)
 
