@@ -1,211 +1,66 @@
 # Herdr Project Orchestration
 
-When one coding agent handles an entire project, its context window fills up. By the third ticket it's slower, less accurate, and losing track of earlier work. This plugin splits the work across focused agents — each with its own context window, its own worktree, and one job to do. The result is consistent quality from the first ticket to the last. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.). Built on [Herdr](https://herdr.dev) and Claude Code skills.
+## The problem
 
-## Install
+When one coding agent handles an entire epic, its context window fills up. By the third ticket it's slower, less accurate, and losing track of earlier work. The context that made it effective on ticket one becomes noise by ticket four.
+
+## What you get
+
+Focused agents, each with its own context window:
+
+- **Orchestrator** — reads the project's tickets, builds a dependency graph, spawns workers wave by wave. Never touches code.
+- **Workers** — each gets one ticket, one git worktree, one clean context. Implements, tests, pushes, opens a draft PR, and shuts down.
+- **Librarian** — sits on main, ingests merged diffs, answers cross-worker questions, manages ticket transitions. Long-lived.
+- **Researcher** (optional) — investigates domain questions so workers don't have to. Accumulates context across the project.
+- **Watcher** (optional) — monitors CI on open PRs, reports failures back to workers.
+
+The result is consistent quality from the first ticket to the last. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.).
+
+## How you use it
 
 ### Prerequisites
 
 - [Herdr](https://herdr.dev) 0.7.5+
-- [Claude Code](https://claude.com/claude-code) with a tracker MCP (Jira, Linear, GitHub Issues, etc.) and GitHub MCP configured
+- [Claude Code](https://claude.com/claude-code) with a tracker MCP and GitHub MCP configured
 - `jq` on PATH
 - `~/.local/bin` on your PATH
 
-### Steps
+### Install
 
 ```bash
 herdr plugin install curtis741/herdr-project-orchestration
 ```
 
-That's it. The build step automatically:
+The build step symlinks the `project` CLI and all skills automatically. Updates propagate through the symlinks — `herdr plugin update` is all you need.
 
-1. Symlinks `project` into `~/.local/bin/`
-2. Symlinks all four skills into `~/.claude/skills/`
-3. Warns if `~/.local/bin` isn't in your PATH
-
-When you run `herdr plugin update`, the plugin directory updates in place and all symlinks pick up the changes — no reinstall needed.
-
-## Quick start
-
-1. **Initialize a project** in an orchestrator session (inside Herdr):
-
-   ```bash
-   eval "$(project init app-1234 <workspace-id>)"
-   project register orchestrator "$HERDR_PANE_ID"
-   ```
-
-2. **Register agents** as you spawn them:
-
-   ```bash
-   project register librarian <pane-id>
-   project register alpha <pane-id>
-   ```
-
-3. **Communicate between agents:**
-
-   ```bash
-   # Fire-and-forget signal
-   project prompt librarian "COMPLETE — PR #42 for APP-1234"
-
-   # Ask a question and get the reply in stdout
-   project ask librarian "What interfaces did APP-1001 introduce?"
-
-   # Read an agent's recent output
-   project read alpha --lines 40
-   ```
-
-4. **Or use the orchestrator skill** — run `/start-project` in Claude Code with a project key (e.g. a Jira epic, Linear project, or GitHub milestone) and it handles the full lifecycle: DAG building, worker spawning, wave advancement, and completion.
-
-## CLI reference
+### Run a project
 
 ```
-project init <project-name> [workspace-id]
-```
-Create a project state file. Prints `export HERDR_PROJECT=<name>` — wrap in `eval` to set the env var.
-
-```
-project register <role>
-```
-Register this agent and signal READY to the orchestrator. Pane ID and session ID are auto-detected. Pass explicit IDs only for crash recovery (`project register <role> <pane-id> [session-id]`).
-
-```
-project stop <role>
-```
-Stop an agent. Marks it as stopped in the state file but preserves its session ID, pane ID, and ticket history for later resume.
-
-```
-project next-worker
-```
-Print the next available worker name (NATO alphabet: alpha, bravo, charlie...).
-
-```
-project assign <role> <ticket-key>
-```
-Track a ticket assignment to a worker. Supports multiple tickets per worker.
-
-```
-project prompt <role> <message> [--wait] [--timeout N]
-```
-Send a message to an agent. Fire-and-forget by default. `--wait` blocks until the agent finishes processing.
-
-```
-project ask <role> <question> [--timeout N] [--lines N]
-```
-Send a question, wait for the agent to finish, and print its response to stdout. Blocking.
-
-```
-project read <role> [--lines N]
-```
-Read an agent's recent pane output. Non-blocking. Default: 40 lines.
-
-```
-project roster
-```
-Print the current role-to-pane-ID map.
-
-```
-project status
-```
-Show agent states (idle, working, blocked) for all registered roles.
-
-```
-project info
-```
-Print the project name, workspace ID, and agent count as JSON.
-
-```
-project resolve <role>
-```
-Print the pane ID for a role. For scripting.
-
-```
-project session <role>
-```
-Print the session ID for a role. For `--resume` or `SendMessage`.
-
-```
-project file
-```
-Print the path to the project state file.
-
-**Global flags:**
-
-- `--project <name>` — override `$HERDR_PROJECT`
-- `-h`, `--help` — show usage
-
-## Skills
-
-Five Claude Code skills for the agent roles:
-
-| File | Role |
-|------|------|
-| `skills/start-project/SKILL.md` | **Orchestrator** — reads the project, builds DAG, spawns agents, tracks waves |
-| `skills/project-worker/SKILL.md` | **Worker** — implements one ticket, tests, pushes, opens draft PR |
-| `skills/start-project/librarian.md` | **Librarian** — tracks merged PRs, answers cross-worker questions, manages ticket transitions |
-| `skills/start-project/researcher.md` | **Researcher** — investigates domain questions, accumulates context across the project |
-| `skills/dry-run-project/SKILL.md` | **Test harness** — validates the signal protocol without a tracker or code changes |
-
-The orchestrator and worker are installed as Claude Code skills (`/start-project`, `/project-worker`). The librarian and researcher are role definitions that agents read during boot — not standalone skills. `DESIGN.md` has the full system design, constraints, and known gaps.
-
-## How it works
-
-### State file
-
-Each project stores its state at `~/.herdr/projects/<project-name>.json`. The file maps roles to pane IDs, session IDs, and ticket assignments. The orchestrator writes it; all agents read it.
-
-```json
-{
-  "project": "app-1234",
-  "workspace_id": "wW",
-  "agents": {
-    "orchestrator": { "pane_id": "pA", "session_id": "sA" },
-    "librarian": { "pane_id": "pB", "session_id": "sB" },
-    "alpha": { "pane_id": "pC", "session_id": "sC", "current_ticket": "APP-1001" }
-  }
-}
+/start-project <epic-key>
 ```
 
-### HERDR_PROJECT env var
+The orchestrator reads the tickets, shows you the plan (waves, dependencies, blockers), and starts spawning agents once you confirm. That's it.
 
-The orchestrator passes `--env HERDR_PROJECT=<name>` when creating tabs. Every agent resolves the same state file automatically — no flags needed.
+## Collaborative orchestration, not autonomous execution
 
-### Role resolution
+This is not "give it an epic and walk away." You're expected to jump into workers, feed the researcher, redirect agents, and keep things on track.
 
-`project prompt alpha "..."` looks up alpha's pane ID in the state file and calls `herdr agent prompt <pane-id> "..."`. Agents address each other by role, never by pane ID.
+The system is designed for an active developer who participates, not a passive one who supervises. Agents are told to ask you rather than guess — a wrong guess costs tokens across every agent that receives the signal, so your input is cheaper than their confidence gaps.
 
-### Agent topology
+What that looks like in practice:
 
-```
-Orchestrator (any session — creates and manages the workspace)
-  │
-  └── Epic Workspace (one Herdr workspace)
-        ├── Librarian tab (repo root, stays on main)
-        ├── Researcher tab (optional, repo root)
-        ├── Worker alpha tab (repo root, cds into .worktrees/<ticket-a>/)
-        ├── Worker bravo tab (repo root, cds into .worktrees/<ticket-b>/)
-        └── Worker charlie tab (repo root, cds into .worktrees/<ticket-c>/)
-```
+- **Review the plan** before the orchestrator starts spawning — confirm waves make sense, flag missing dependencies
+- **Jump into a worker** when it's stuck or going in the wrong direction
+- **Feed domain knowledge** to the researcher when agents hit questions you know the answer to
+- **Watch the wave transitions** — the orchestrator will pause between waves for your sign-off
 
-Workers start scoped to the repo root (shared memory, session list) and `cd` into their worktree subdirectory for branch isolation.
+## Advanced
 
-### Signal protocol
+The `project` CLI handles all inter-agent communication and state management. See [`docs/cli.md`](docs/cli.md) for the full command reference.
 
-Workers and the librarian communicate through structured signals:
+For system internals — state file format, signal protocol, role resolution, agent topology — see [`docs/design.md`](docs/design.md).
 
-| Signal | From → To | Purpose |
-|--------|-----------|---------|
-| `READY` | Worker → Orchestrator | Worker booted, waiting for assignment |
-| `STARTING` | Worker → Librarian | Triggers ticket transition to In Progress |
-| `COMPLETE` | Worker → Librarian | PR opened; librarian transitions to Code Review, tells watcher to monitor CI, relays to orchestrator |
-| `DONE` | Worker → Librarian | Post-merge verification complete (optional); librarian transitions to Done |
-| `BLOCKED` | Worker → Orchestrator | Escalates to user |
-| `UNBLOCKED` | Librarian → Orchestrator | Dependency cleared, ready for next worker |
-| `WATCH` | Librarian → Watcher | Start monitoring CI on a PR |
-| `SCOPE` | Worker → Orchestrator | Found work outside ticket scope |
-
-## Design
-
-See [docs/design.md](docs/design.md) for the full system design: role boundaries, design decisions, known gaps, and the feedback log from real epic runs.
+To test the signal protocol without a tracker or code changes, use the dry-run skill (`/dry-run-project`).
 
 ## License
 
