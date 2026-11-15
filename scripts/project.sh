@@ -931,7 +931,7 @@ cmd_checkin() {
         if [[ -z "$header_ts" || "$header_ts" > "$cutoff" || "$header_ts" == "$cutoff" ]]; then
           fb_entries="${fb_entries}  ${current_header}\n    ${current_body}\n"
           fb_count=$((fb_count + 1))
-            fi
+        fi
       fi
       if [[ $fb_count -eq 0 ]]; then
         echo "  No new feedback since last check-in."
