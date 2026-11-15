@@ -145,9 +145,34 @@ The orchestrator stays lightweight: it reads the ticket tracker, manages the DAG
 
 The librarian proactively recommends reuse or fresh worker in its UNBLOCKED signal, based on the coupling between tickets. Reuse when the next ticket builds on internals (same handler, same service); fresh when it only needs the interface (column names, method signatures). The orchestrator follows the advice or asks the librarian if it's not obvious. No hardcoded chain-length rule.
 
-### Worktree cleanup
+### Worktree lifecycle
 
-After a PR merges and the librarian ingests: remove the worktree (`herdr worktree remove --workspace <id>`) unless the worker has a next ticket in a sequential chain. The orchestrator handles this in Step 5.
+Worktrees are the isolation mechanism for concurrent workers. Clear lifecycle rules prevent drift — stale worktrees accumulating, branches colliding, dirty state from previous tasks.
+
+**Creation:**
+- The orchestrator creates worktrees, never workers. One worktree per ticket, always from `origin/main`.
+- Path convention: `<repo>/.worktrees/<ticket-key-lowercase>/` (already gitignored).
+- Branch naming: `<ticket-key-lowercase>` — matches the directory name. No prefixes, no worker names in the branch.
+- Command: `git -C <repo> worktree add .worktrees/<ticket> -b <ticket> origin/main`
+- Never reuse an existing worktree for a different ticket. When a worker gets a follow-up ticket in a sequential chain, it stays in the same worktree but checks out a new branch (`git checkout -b <new-ticket> origin/main`).
+
+**Cleanup after merge:**
+- After a PR merges and the librarian ingests the diff, the orchestrator removes the worktree: `git -C <repo> worktree remove .worktrees/<ticket>/`
+- Exception: skip cleanup if the worker has a next ticket in a sequential chain (it reuses the worktree with a new branch).
+
+**Cleanup after project completion:**
+- When all tickets are done, the orchestrator runs `project cleanup` to remove any remaining worktrees. This catches worktrees from sequential chains and any that were missed during wave transitions.
+
+**Orphan detection:**
+- Crashes, terminal closes, or orchestrator reboots can leave worktrees behind with no active agent.
+- `project cleanup --dry-run` lists worktrees and marks each as active (has a non-stopped agent assigned) or orphan (no matching agent).
+- `project cleanup` removes orphans and runs `git worktree prune` to clean up git's internal bookkeeping.
+- The orchestrator should run cleanup at project start (before spawning wave 1) to clear debris from previous runs, and at project end.
+
+**What workers must not do:**
+- Create or remove worktrees — that's the orchestrator's job.
+- Switch to a different worktree — stay in the one you were assigned.
+- The "worktree escape" in the worker skill is user-initiated only (e.g. for console tasks that need the primary checkout).
 
 ### Orchestrator reboot mid-epic
 
