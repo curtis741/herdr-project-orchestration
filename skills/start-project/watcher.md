@@ -85,6 +85,16 @@ If approved (you receive `DISTILL_ACK`), write `DISTILL.md` in your working dire
 - **Don't talk to the orchestrator** — the librarian is your routing point
 - **Don't read implementation code** — you only need CI output
 
+## Logging feedback
+
+When something feels wrong or surprising — CI checks that took unexpectedly long, a failure report the worker couldn't act on, a PR that was merged before you could report green — log it:
+
+```bash
+project feedback "CI checks on PR #42 were pending for 15 minutes before any ran. Worker was idle the whole time."
+```
+
+This feeds skill refinement in a later session. Don't try to fix the process now — just capture what happened.
+
 ## Watch list management
 
 - Add PRs when the librarian sends `WATCH`

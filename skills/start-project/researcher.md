@@ -109,6 +109,16 @@ project prompt orchestrator "DISTILL — context pressure is high. <brief reason
 
 If approved (you receive `DISTILL_ACK`), write `DISTILL.md` in your working directory with your accumulated domain knowledge: findings, open questions, and any context the librarian doesn't have yet (report findings to the librarian first if you haven't already). Then signal `DISTILL_READY`. You'll be restarted with clean context and this state.
 
+## Logging feedback
+
+When something feels wrong or surprising — a question you couldn't answer from research.md, a discovery that invalidated earlier findings, a worker question that arrived before discovery was complete — log it:
+
+```bash
+project feedback "Worker asked about the event schema before discovery was done. Had to do a targeted investigation mid-Phase 1."
+```
+
+This feeds skill refinement in a later session. Don't try to fix the process now — just capture what happened.
+
 ## What you do NOT do
 
 - Write code or open PRs

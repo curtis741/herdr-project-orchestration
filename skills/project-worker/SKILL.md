@@ -211,6 +211,16 @@ Use `project prompt <role> <message>` to message any agent directly — don't ju
 - **CI is failing:** The watcher monitors your PRs and reports CI failures to you directly. Fix the issue, push, and the watcher will recheck. If the watcher hasn't reported a failure but you notice one, fix and push — the watcher will pick up the new status.
 - **Related work you discover:** Use judgment based on PR blast radius. A small fix that unblocks your ticket (adding a gem, fixing a broken helper) — just do it, mention it in the PR. A separate unit of work that would double the diff (moving controllers, refactoring a shared service) — `project prompt orchestrator "SCOPE — <explanation>"` and let it route the work to a follow-up ticket or another worker.
 
+## Logging feedback
+
+When something feels wrong or surprising during your work — a librarian answer that was stale, a dependency that wasn't flagged, a signal that didn't get acknowledged, an assignment that was unclear — log it:
+
+```bash
+project feedback "Asked librarian about APP-1001's interface, had to ask twice before getting a useful answer. First response was too vague."
+```
+
+This feeds skill refinement in a later session. Don't try to fix the process now — just capture what happened.
+
 ## Requesting a distill
 
 If your context is getting noisy — responses are slowing down, you're repeating mistakes, or tool output has accumulated heavily — request a distill:

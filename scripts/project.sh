@@ -42,6 +42,7 @@ Commands:
   log [--tail N]                   Print the signal log (default: last 50 entries)
   log-decision <decision-type> <payload>
                                    Log an orchestrator decision (wave transition, spawn, etc.)
+  feedback "<observation>"         Log a qualitative observation for skill refinement
 
 Project name is auto-detected from $HERDR_PROJECT.
 Override with --project <name>.
@@ -588,6 +589,49 @@ cmd_log_decision() {
   echo "logged: DECISION:${decision_type}"
 }
 
+feedback_file() {
+  local proj_dir="$PROJECTS_DIR/$(resolve_project)"
+  mkdir -p "$proj_dir"
+  echo "$proj_dir/feedback.md"
+}
+
+classify_role() {
+  local role="$1"
+  case "$role" in
+    orchestrator) echo "orchestrator" ;;
+    librarian|dog-librarian) echo "librarian" ;;
+    watcher|dog-watcher) echo "watcher" ;;
+    researcher|dog-researcher) echo "researcher" ;;
+    tester-*) echo "tester" ;;
+    *) echo "worker" ;;
+  esac
+}
+
+cmd_feedback() {
+  local observation="$*"
+  if [[ -z "$observation" ]]; then
+    echo "usage: project feedback \"<observation>\"" >&2
+    exit 1
+  fi
+  local f
+  f="$(ensure_state)"
+  local caller
+  caller="$(resolve_caller "$f")"
+  if [[ -z "$caller" ]]; then
+    echo "error: cannot identify caller — are you registered?" >&2
+    exit 1
+  fi
+  local role_type
+  role_type="$(classify_role "$caller")"
+  local ts
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  local fb
+  fb="$(feedback_file)"
+  printf '\n## %s — %s (%s)\n%s\n' "$ts" "$caller" "$role_type" "$observation" >> "$fb"
+  log_signal "$caller" "-" "FEEDBACK" "$observation"
+  echo "logged feedback to $fb"
+}
+
 cmd_resolve() {
   local role="${1:-}"
   if [[ -z "$role" ]]; then
@@ -662,5 +706,6 @@ case "$cmd" in
   file)       cmd_file ;;
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;
+  feedback)   cmd_feedback "$@" ;;
   *)          usage ;;
 esac

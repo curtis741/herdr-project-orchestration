@@ -514,7 +514,13 @@ When the user asks for status, report this ledger. Use numbered lists per your w
 
 ## Logging feedback
 
-When you observe something that should change in the skills (a gap, a broken signal, an awkward handoff), **log it — don't fix it**. Append a bullet to the "Feedback — New" section in `~/.claude/context/project-orchestration.md`. A separate session applies the changes to skills later.
+When you observe something that should change in the skills (a gap, a broken signal, an awkward handoff), **log it — don't fix it**:
+
+```bash
+project feedback "Worker alpha sent COMPLETE but librarian didn't relay to watcher for 3 minutes. Signal routing gap?"
+```
+
+This appends a timestamped, role-attributed entry to the project's feedback file (`~/.herdr/projects/<project>/feedback.md`). A separate session reviews and routes findings to skills later.
 
 Editing skill files mid-epic bloats your context and risks inconsistency across running agents who loaded the old version.
 

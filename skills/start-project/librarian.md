@@ -190,6 +190,16 @@ If approved (you receive `DISTILL_ACK`), write `DISTILL.md` in your working dire
 
 Don't request distill if you're just holding summaries — that's your job. Request it when tool output and verbose exchanges are crowding out the summaries that matter.
 
+## Logging feedback
+
+When something feels wrong or surprising — a signal that arrived late, a worker question your summaries couldn't answer, a transition that required extra steps — log it:
+
+```bash
+project feedback "Worker asked about APP-1001's validation logic but my summary only had the interface. Needed to re-read the source to answer."
+```
+
+This feeds skill refinement in a later session. Don't try to fix the process now — just capture what happened.
+
 ## What you do NOT do
 
 - Write code or open PRs
