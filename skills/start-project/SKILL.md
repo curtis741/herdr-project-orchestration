@@ -225,7 +225,7 @@ When the researcher's context is degraded (slow responses, losing track of findi
 
 ```bash
 project stop researcher
-herdr agent send-keys <pane_id> /exit
+herdr pane close <pane_id>
 herdr agent start researcher --kind claude --pane <pane_id>
 project register researcher <pane_id>
 ```
@@ -407,13 +407,15 @@ When a worker is `blocked`:
 2. If it's a permission prompt or question, escalate to the user
 3. If it's a technical blocker, report it
 
-## Step 6: Worker reuse decisions
+## Step 6: Worker finished
+
+When a worker signals COMPLETE or DONE, decide its fate in one pass: reuse or shut down.
+
+### 6a. Evaluate reuse
 
 **Default to a fresh worker.** Worker reuse is a context-window optimization, not a way to avoid spawning agents. A fresh worker with a librarian summary is almost always better than a worker carrying stale context from a different ticket.
 
-When a ticket completes and the next ticket in the chain is unblocked, ask yourself: does the next ticket need implementation details that live only in this worker's context window — details the librarian can't summarize? If the answer isn't a clear yes, spawn fresh.
-
-The librarian may message you unprompted after ingesting a merge: `"Worker alpha finished APP-1001 and I see APP-1003 is unblocked. APP-1003 builds directly on the handler internals — reuse the worker."` Follow that advice.
+The librarian may advise unprompted after ingesting a merge: `"Worker alpha finished APP-1001 and I see APP-1003 is unblocked. APP-1003 builds directly on the handler internals — reuse the worker."` Follow that advice.
 
 If the librarian hasn't weighed in and it's not obvious, ask:
 
@@ -421,7 +423,15 @@ If the librarian hasn't weighed in and it's not obvious, ask:
 project ask librarian "APP-1003 depends on APP-1001. Does APP-1003 need the implementation details from APP-1001's worker, or is the interface summary enough for a fresh worker?"
 ```
 
-**Reuse only when** the next ticket extends the same internals — validation edge cases, factory setup, schema nuances that the librarian's summary won't capture. The worker must have context that's genuinely hard to transfer. Track the new assignment, update the tab label, and reset the branch:
+**Reuse only when** the next ticket extends the same internals — validation edge cases, factory setup, schema nuances that the librarian's summary won't capture. The worker must have context that's genuinely hard to transfer.
+
+**Don't reuse just because a worker is free.** "Charlie knows the context" or "delta worked on something nearby" aren't reasons — the librarian's summary gives a fresh worker everything it needs.
+
+**Force a fresh worker** when the current worker's context is visibly degraded (slow responses, repeated mistakes, deep in a debugging hole).
+
+### 6b. If reuse — assign the next ticket
+
+Track the new assignment, update the tab label, and reset the branch:
 
 ```bash
 project assign <worker-name> <new-ticket-key>
@@ -435,17 +445,13 @@ Summary: <ticket summary>
 Description: <ticket description>"
 ```
 
-**Don't reuse just because a worker is free.** "Charlie knows the context" or "delta worked on something nearby" aren't reasons — the librarian's summary gives a fresh worker everything it needs. Only reuse when the context window carries implementation details the librarian can't summarize.
+### 6c. If no reuse — full shutdown
 
-**Force a fresh worker** when the current worker's context is visibly degraded (slow responses, repeated mistakes, deep in a debugging hole).
-
-## Step 6a: Shut down idle workers
-
-When a worker finishes and there's no immediate next ticket for it, **stop it**. Idle workers waste context on every incoming prompt and clutter `project status`. Don't leave workers running "in case we need them."
+No next ticket, or a fresh worker is better. Shut down completely:
 
 ```bash
 project stop <worker-name>
-herdr agent send-keys <pane_id> /exit
+herdr pane close <pane_id>
 ```
 
 `project stop` marks the agent as stopped in the state file but preserves its session ID, pane ID, tickets, and worktree path. If you later need that worker's context (rare — the librarian should have what matters), resume it:
