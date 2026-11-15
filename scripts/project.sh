@@ -47,6 +47,7 @@ Commands:
                                    Detect and remove orphan worktrees (no active agent)
   recover                          Diagnose project state after restart — show what's resumable
   check-in [--since <timestamp>]   Developer summary: what happened, what needs you
+  observe                          Read-only snapshot: agents, signals, blockers, worktrees
 
 Project name is auto-detected from $HERDR_PROJECT.
 Override with --project <name>.
@@ -987,6 +988,200 @@ cmd_checkin() {
   echo
 }
 
+cmd_observe() {
+  local f
+  f="$(ensure_state)"
+  local name
+  name="$(read_field "$f" "project")"
+  local ws
+  ws="$(read_field "$f" "workspace_id")"
+
+  echo "═══════════════════════════════════════════════════"
+  echo "  $name${ws:+ [$ws]}"
+  echo "═══════════════════════════════════════════════════"
+  echo
+
+  # --- Collect agent data (one herdr call per live agent, cached in temp file) ---
+  local roles
+  roles=$(jq -r '.agents | keys[]' "$f")
+
+  local cache_file="${f}.observe.$$"
+  trap 'rm -f "$cache_file"' RETURN
+
+  for role in $roles; do
+    local pane is_stopped ticket status
+    pane="$(read_pane "$f" "$role")"
+    is_stopped=$(jq -r --arg role "$role" '.agents[$role].stopped // false' "$f")
+    ticket=$(jq -r --arg role "$role" '.agents[$role].current_ticket // ""' "$f")
+
+    if [[ "$is_stopped" == "true" ]]; then
+      status="stopped"
+    else
+      status=$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unreachable")
+    fi
+    printf '%s\t%s\t%s\n' "$role" "$status" "$ticket" >> "$cache_file"
+  done
+
+  # --- Agents ---
+  echo "▸ Agents"
+  echo "────────────────────────────────────────────────────"
+  local working_count=0 idle_count=0 stopped_count=0
+
+  while IFS=$'\t' read -r role status ticket; do
+    case "$status" in
+      working) working_count=$((working_count + 1)) ;;
+      idle|done) idle_count=$((idle_count + 1)) ;;
+      stopped) stopped_count=$((stopped_count + 1)) ;;
+    esac
+
+    local icon
+    case "$status" in
+      working)     icon="●" ;;
+      idle|done)   icon="○" ;;
+      stopped)     icon="□" ;;
+      unreachable) icon="✗" ;;
+      *)           icon="?" ;;
+    esac
+
+    local ticket_str=""
+    if [[ -n "$ticket" && "$ticket" != "-" ]]; then
+      ticket_str="  $ticket"
+    fi
+
+    printf "  %s %-18s %-12s%s\n" "$icon" "$role" "$status" "$ticket_str"
+  done < "$cache_file"
+
+  echo
+  printf "  %d working · %d idle · %d stopped\n" "$working_count" "$idle_count" "$stopped_count"
+  echo
+
+  # --- Recent signals (last 15) ---
+  echo "▸ Recent Signals"
+  echo "────────────────────────────────────────────────────"
+  local lf
+  lf="$(signals_file)"
+  if [[ -f "$lf" ]]; then
+    # Show only substantive signals (skip READY, ASSIGN, ASK which are routine)
+    local shown=0
+    local blocked_entries=""
+    tac "$lf" | while IFS=$'\t' read -r ts sender receiver sig_type payload; do
+      [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || continue
+      case "$sig_type" in
+        READY|ASSIGN|ASK|"") continue ;;
+      esac
+      [[ $shown -ge 15 ]] && break
+      shown=$((shown + 1))
+
+      local time_part="${ts#*T}"
+      time_part="${time_part%Z}"
+
+      # Truncate payload
+      payload="${payload%%$'\n'*}"
+      if [[ ${#payload} -gt 60 ]]; then
+        payload="${payload:0:57}..."
+      fi
+
+      local sig_icon
+      case "$sig_type" in
+        DONE|COMPLETE) sig_icon="✓" ;;
+        BLOCKED)       sig_icon="⚠" ;;
+        STARTING)      sig_icon="→" ;;
+        SCOPE)         sig_icon="↗" ;;
+        FEEDBACK)      sig_icon="✎" ;;
+        RESEARCH)      sig_icon="◇" ;;
+        STOP)          sig_icon="□" ;;
+        *)             sig_icon="·" ;;
+      esac
+
+      printf "  %s %s  %-10s %s→%s  %s\n" "$sig_icon" "$time_part" "$sig_type" "$sender" "$receiver" "$payload"
+    done
+  else
+    echo "  No signal log."
+  fi
+  echo
+
+  # --- Blockers ---
+  echo "▸ Blockers"
+  echo "────────────────────────────────────────────────────"
+  local has_blockers=false
+  if [[ -f "$lf" ]]; then
+    # Find unresolved BLOCKED signals: a BLOCKED not followed by DONE/STARTING from same sender
+    local blocked_senders=""
+    while IFS=$'\t' read -r ts sender receiver sig_type payload; do
+      [[ "$ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T ]] || continue
+      case "$sig_type" in
+        BLOCKED)
+          blocked_senders="${blocked_senders:+$blocked_senders }$sender"
+          ;;
+        DONE|COMPLETE|STARTING)
+          # Remove this sender from blocked list
+          blocked_senders=$(echo "$blocked_senders" | tr ' ' '\n' | grep -v "^${sender}$" | tr '\n' ' ')
+          ;;
+      esac
+    done < "$lf"
+
+    blocked_senders=$(echo "$blocked_senders" | tr ' ' '\n' | sort -u | grep -v '^$' || true)
+    if [[ -n "$blocked_senders" ]]; then
+      for agent in $blocked_senders; do
+        has_blockers=true
+        # Find the last BLOCKED message from this agent
+        local block_msg
+        block_msg=$(grep -E "	${agent}	.*	BLOCKED	" "$lf" | tail -1 | cut -f5)
+        block_msg="${block_msg:0:80}"
+        echo "  ⚠ $agent: $block_msg"
+      done
+    fi
+  fi
+
+  # Check for stalled agents (idle with a ticket assigned, not stopped)
+  while IFS=$'\t' read -r role status ticket; do
+    [[ "$status" == "stopped" ]] && continue
+    [[ -z "$ticket" || "$ticket" == "-" ]] && continue
+
+    if [[ "$status" == "idle" || "$status" == "done" ]]; then
+      has_blockers=true
+      echo "  ⏸ $role idle on $ticket — may be stalled or finished"
+    elif [[ "$status" == "unreachable" ]]; then
+      has_blockers=true
+      local pane
+      pane="$(read_pane "$f" "$role")"
+      echo "  ✗ $role unreachable (pane $pane) — assigned to $ticket"
+    fi
+  done < "$cache_file"
+
+  if [[ "$has_blockers" == false ]]; then
+    echo "  None."
+  fi
+  echo
+
+  # --- Worktrees ---
+  echo "▸ Worktrees"
+  echo "────────────────────────────────────────────────────"
+  local repo_root
+  repo_root=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null | sed 's|/\.git$||' || true)
+  if [[ -z "$repo_root" ]]; then
+    repo_root=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  fi
+
+  if [[ -d "$repo_root/.worktrees" ]]; then
+    for wt in "$repo_root"/.worktrees/*/; do
+      [[ -d "$wt" ]] || continue
+      local wt_name branch ahead dirty_flag
+      wt_name=$(basename "$wt")
+      branch=$(git -C "$wt" branch --show-current 2>/dev/null || echo "?")
+      ahead=$(git -C "$wt" rev-list --count origin/main..HEAD 2>/dev/null || echo "?")
+      dirty_flag=""
+      if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null)" ]]; then
+        dirty_flag=" ✎"
+      fi
+      printf "  %-16s %s commits%s\n" "$wt_name" "$ahead" "$dirty_flag"
+    done
+  else
+    echo "  No worktrees."
+  fi
+  echo
+}
+
 cmd_resolve() {
   local role="${1:-}"
   if [[ -z "$role" ]]; then
@@ -1143,5 +1338,6 @@ case "$cmd" in
   cleanup)     cmd_cleanup "$@" ;;
   recover)    cmd_recover "$@" ;;
   check-in)   cmd_checkin "$@" ;;
+  observe)    cmd_observe ;;
   *)          usage ;;
 esac
