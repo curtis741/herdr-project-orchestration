@@ -19,7 +19,7 @@ echo "✓ Linked: project → $HOME/.local/bin/project"
 
 # Skill symlinks
 mkdir -p "$HOME/.claude/skills"
-for skill in start-project project-worker; do
+for skill in start-project project-worker guided-tour; do
   ln -sfn "$PLUGIN_DIR/skills/$skill" "$HOME/.claude/skills/$skill"
   echo "✓ Linked: ~/.claude/skills/$skill"
 done
@@ -54,16 +54,11 @@ if [[ -z "$old_version" ]]; then
 WELCOME
   echo "  Getting started:"
   echo ""
+  echo "    First time? Take the guided tour (~5 min):"
+  echo "      /guided-tour"
+  echo ""
   echo "    If you have an epic ready:"
   echo "      /start-project"
-  echo ""
-  echo "    Or paste this into a new session in your project directory"
-  echo "    for a guided walkthrough:"
-  echo ""
-  echo "      \"Read ~/.claude/skills/PROJECT_GUIDE.md and walk me through how project"
-  echo '       orchestration works. Explain the roles, how agents communicate,'
-  echo '       and why context window separation matters. Then offer to do a'
-  echo '       dry run or start a real project."'
   echo ""
   echo "  ✓ Installed v$new_version"
   echo ""

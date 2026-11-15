@@ -23,6 +23,7 @@ skills/
   start-project/researcher.md # Researcher role definition (read by agents, not a skill)
   project-worker/SKILL.md   # Worker skill
   dry-run-project/SKILL.md  # Signal protocol test harness
+  guided-tour/SKILL.md     # Interactive onboarding walkthrough
 docs/
   design.md                 # What the system is and how it works
   decisions.md              # Why: key decisions, open questions, feedback log

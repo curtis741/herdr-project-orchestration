@@ -54,7 +54,15 @@ Each project gets a state file at `~/.herdr/projects/<name>.json`. It maps roles
 
 The orchestrator reads the project's tickets, builds the DAG, and starts spawning agents.
 
-**Option 2: Dry run.** Test the signal protocol without touching a tracker or code. The dry-run script lives in the plugin directory alongside this guide:
+**Option 2: Guided tour.** An interactive walkthrough that spawns a small set of agents and walks you through the signal flow step by step, with pauses to explain what's happening and prompts for you to try messaging agents yourself:
+
+```
+/guided-tour
+```
+
+Takes about 5 minutes. After one run, you'll understand the roles, how signals flow, and how to participate.
+
+**Option 3: Dry run.** Test the signal protocol without touching a tracker or code. The dry-run script lives in the plugin directory alongside this guide:
 
 ```bash
 # Resolve the plugin directory from this guide's symlink
