@@ -36,7 +36,15 @@ When an agent messages a stopped agent, the CLI auto-escalates to the orchestrat
 
 The orchestrator reads the tickets, shows you the plan, and starts spawning agents once you confirm.
 
-**Dry run.** Test the signal protocol without a tracker or code changes:
+**Option 2: Guided tour.** An interactive walkthrough that spawns a small set of agents and walks you through the signal flow step by step, with pauses to explain what's happening and prompts for you to try messaging agents yourself:
+
+```
+/guided-tour
+```
+
+Takes about 5 minutes. After one run, you'll understand the roles, how signals flow, and how to participate.
+
+**Option 3: Dry run.** Test the signal protocol without touching a tracker or code:
 
 ```
 /dry-run-project
