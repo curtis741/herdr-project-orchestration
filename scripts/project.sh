@@ -43,6 +43,8 @@ Commands:
   log-decision <decision-type> <payload>
                                    Log an orchestrator decision (wave transition, spawn, etc.)
   feedback "<observation>"         Log a qualitative observation for skill refinement
+  cleanup [--dry-run] [--repo <path>]
+                                   Detect and remove orphan worktrees (no active agent)
 
 Project name is auto-detected from $HERDR_PROJECT.
 Override with --project <name>.
@@ -668,6 +670,84 @@ cmd_file() {
   state_file
 }
 
+cmd_cleanup() {
+  local dry_run=false
+  local repo_path=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run=true; shift ;;
+      --repo) shift; repo_path="${1:-}"; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ -z "$repo_path" ]]; then
+    # Use git-common-dir to find the main repo (works from inside a worktree)
+    local git_common
+    git_common="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    if [[ -n "$git_common" && "$git_common" == */.git ]]; then
+      repo_path="${git_common%/.git}"
+    else
+      repo_path="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    fi
+    if [[ -z "$repo_path" ]]; then
+      echo "error: not in a git repo and --repo not specified" >&2
+      exit 1
+    fi
+  fi
+
+  local worktrees_dir="$repo_path/.worktrees"
+  if [[ ! -d "$worktrees_dir" ]]; then
+    echo "no .worktrees/ directory at $repo_path"
+    return
+  fi
+
+  local f
+  f="$(ensure_state)"
+
+  # Collect active ticket assignments (non-stopped agents with current_ticket)
+  local active_tickets
+  active_tickets=$(jq -r '
+    .agents | to_entries[]
+    | select(.value.stopped != true)
+    | .value.current_ticket // empty
+  ' "$f" | tr '[:upper:]' '[:lower:]')
+
+  local orphan_count=0
+  local kept_count=0
+
+  echo "Scanning $worktrees_dir..."
+  echo "─────────────────────────────────"
+
+  for dir in "$worktrees_dir"/*/; do
+    [[ -d "$dir" ]] || continue
+    local name
+    name="$(basename "$dir")"
+
+    if echo "$active_tickets" | grep -qx "$name"; then
+      printf "  %-20s active\n" "$name"
+      kept_count=$((kept_count + 1))
+    else
+      printf "  %-20s orphan\n" "$name"
+      orphan_count=$((orphan_count + 1))
+      if ! $dry_run; then
+        git -C "$repo_path" worktree remove ".worktrees/$name" --force 2>/dev/null \
+          || rm -rf "$dir"
+        echo "    → removed"
+      fi
+    fi
+  done
+
+  # Also prune git's worktree bookkeeping for any that point to missing dirs
+  if ! $dry_run; then
+    git -C "$repo_path" worktree prune 2>/dev/null || true
+  fi
+
+  echo "─────────────────────────────────"
+  echo "$kept_count active, $orphan_count orphan$(if $dry_run; then echo ' (dry run — nothing removed)'; fi)"
+}
+
 # Parse global flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -707,5 +787,6 @@ case "$cmd" in
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;
   feedback)   cmd_feedback "$@" ;;
+  cleanup)     cmd_cleanup "$@" ;;
   *)          usage ;;
 esac

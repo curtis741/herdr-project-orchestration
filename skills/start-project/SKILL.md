@@ -232,6 +232,16 @@ project register researcher <pane_id>
 
 Boot with the resume payload above (Phase: ongoing). The researcher loads research.md and picks up where it left off. Don't use `--resume` for a degraded researcher — the point of restarting is to shed the bloated context.
 
+## Step 3a: Clean up stale worktrees
+
+Before spawning workers, remove any orphan worktrees left from previous runs (crashes, reboots, aborted projects):
+
+```bash
+project cleanup
+```
+
+This cross-references `.worktrees/` directories with the project state file. Worktrees with no active agent are removed, and git's internal worktree bookkeeping is pruned. Use `--dry-run` first if you want to inspect before removing.
+
 ## Step 4: Spawn wave 1 workers
 
 For each ticket in wave 1, create a worktree inside the repo, then spawn a worker in a tab scoped to the repo root:
@@ -242,7 +252,7 @@ For each ticket in wave 1, create a worktree inside the repo, then spawn a worke
 git -C <repo_path> worktree add .worktrees/<ticket-key-lowercase> -b <ticket-key-lowercase> origin/main
 ```
 
-This puts the worktree at `<repo>/.worktrees/<ticket>/` — already gitignored, and inside the repo dir so the Claude session can access it.
+Branch name matches the directory name — always lowercase ticket key, no prefixes. This puts the worktree at `<repo>/.worktrees/<ticket>/` — already gitignored, and inside the repo dir so the Claude session can access it.
 
 ### 4b. Name the worker and create its tab
 
@@ -393,11 +403,11 @@ When a worker's PR is **merged** (check via GitHub MCP — the user may merge ma
    ```bash
    project prompt librarian "APP-1001 PR #XXXX was just merged to main. Read the diff and summarize what changed — focus on new interfaces, changed files, and patterns other workers need to know about." --wait --timeout 120000
    ```
-2. Clean up the worktree:
+2. Clean up the worktree (orchestrator's responsibility, not the worker's):
    ```bash
    git -C <repo_path> worktree remove .worktrees/<ticket-key-lowercase>
    ```
-   Skip cleanup if the worker has a next ticket in a sequential chain (it reuses the worktree — see Step 6).
+   Skip cleanup if the worker has a next ticket in a sequential chain — it stays in the same worktree but checks out a new branch (see Step 6).
 3. Check if any wave 2+ tickets are now unblocked (all dependencies merged)
 4. Spawn workers for newly unblocked tickets (repeat Step 4)
 
@@ -466,11 +476,16 @@ When all tickets are done and all PRs are merged:
    ```bash
    project prompt librarian "All tickets in project APP-XXXX are complete. Transition the project to Done and summarize the full scope of changes across all PRs." --wait --timeout 120000
    ```
-2. Report to the user:
+2. Clean up remaining worktrees (catches sequential-chain worktrees and any missed during wave transitions):
+   ```bash
+   project cleanup
+   ```
+3. Report to the user:
    ```
    [start-project] Project APP-XXXX complete.
    - N tickets implemented
    - N PRs merged
+   - Worktrees cleaned up
    - Librarian has the full change summary if you need it
    ```
 

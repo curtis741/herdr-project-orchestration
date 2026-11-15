@@ -18,10 +18,10 @@ Your boot prompt tells you your role name (e.g. `alpha`, `bravo`). Other roles y
 
 ## Step 0: Boot into your worktree
 
-Your boot prompt told you which worktree directory. Before anything else:
+Your boot prompt told you which worktree directory. The orchestrator created it for you — workers never create or remove worktrees. Before anything else:
 
 1. `cd .worktrees/<ticket>/`
-2. Verify: `pwd && git branch --show-current`
+2. Verify: `pwd && git branch --show-current` — the branch should match the ticket key (lowercase).
 3. `project register <your-role>` — this writes you into the state file and signals the orchestrator you're ready.
 4. **Stop and wait** for the orchestrator to send your assignment.
 
@@ -128,14 +128,14 @@ open "<pr-url>"
 
 ## Follow-up work after a PR merges
 
-If you need to do follow-up work after your PR merges (a fix, a second PR, a continuation), stay in your worktree — just start a new branch from fresh main:
+If the orchestrator assigns you a follow-up ticket in a sequential chain, stay in your worktree — just start a new branch from fresh main:
 
 ```bash
 git fetch origin main
-git checkout -b <new-branch> origin/main
+git checkout -b <new-ticket-key-lowercase> origin/main
 ```
 
-Don't remove the worktree and create a new one. The worktree is your workspace; branches come and go within it.
+The worktree is your workspace; branches come and go within it. Don't remove the worktree or create a new one — the orchestrator manages worktree lifecycle.
 
 ## Step 8: Test brief (API / parity work only)
 
@@ -261,5 +261,6 @@ Some work (data migrations, rake tasks, console testing) needs the primary check
 - Work on tickets you weren't assigned
 - Merge PRs
 - Force-push
+- Create or remove worktrees — the orchestrator manages worktree lifecycle
 - Create plan documents without being asked
 - Spawn your own sub-agents — ask the orchestrator if you need help
