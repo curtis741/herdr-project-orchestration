@@ -140,7 +140,9 @@ When the user confirms the task is ready (says something like 'yes, task is read
 
 Signal protocol for later:
   Worker STARTING — DEMO-TASK-001  →  ACK it
-  Worker DONE — DEMO-TASK-001  →  Store the completion. When the user asks what happened, reflect the updated state.
+  Worker DONE — DEMO-TASK-001  →  Store the completion AND relay to the orchestrator:
+    project prompt orchestrator 'DONE — DEMO-TASK-001 complete. <one-line summary from worker>'
+  When the user asks what happened, reflect the updated state.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
 Do NOT load /project-librarian. Follow the protocol above and answer questions naturally.
@@ -269,10 +271,15 @@ Print:
 >
 > **Ready for a real project?** Run `/start-project <epic-key>` with a Jira, Linear, or GitHub epic.
 
-Clean up:
+Clean up the demo file:
 
 ```bash
 rm -f TOUR_NOTES.md
+```
+
+**Do NOT close the workspace automatically.** Ask the user if they're ready to shut down. Only close the workspace when they confirm:
+
+```bash
 herdr workspace close <workspace-id>
 ```
 

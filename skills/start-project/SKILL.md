@@ -526,6 +526,8 @@ When all tickets are done and all PRs are merged:
    - Librarian has the full change summary if you need it
    ```
 
+**Do NOT close the workspace or shut down agents automatically.** The user may want to ask the librarian questions, review summaries, or inspect the state. Ask the user if they're ready to shut down. Only close the workspace when they confirm.
+
 ## Reboot recovery
 
 If you're a fresh orchestrator session picking up a project after a reboot (computer restart, terminal closed), the system is designed to be resumable from durable state. All pane IDs are stale but everything needed to reconstruct the project lives on disk.
