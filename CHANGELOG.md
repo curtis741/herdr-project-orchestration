@@ -1,9 +1,25 @@
 # Changelog
 
+## 0.7.0
+
+- **Signal log and decision audit trail** — every `project prompt` and `project ask` appends to `~/.herdr/projects/<name>.signals.log` with timestamp, sender, receiver, and signal type. `project log` shows the trail; `project log-decision` records orchestrator decisions (wave transitions, spawn choices, reuse). Foundation for debugging stalled waves and post-run analysis.
+- **Researcher two-phase model** — researcher now operates in Discovery (front-loaded, maps the system end-to-end) and Ongoing (queryable from existing findings). All findings go to `~/.herdr/projects/<name>/research.md`, which survives restarts. The orchestrator can restart the researcher cleanly — the new instance loads research.md and picks up where it left off.
+- **DISTILL protocol** — any agent can send `DISTILL — <reason>` to the orchestrator when context quality degrades. Orchestrator approves (agent writes DISTILL.md, gets restarted fresh with that state) or defers (agent is close to finishing). All role definitions now include distill guidance.
+- **Fast-path completion** — orchestrator can mark trivial tasks as fast-path. Workers skip PR and test brief, signal `DONE` directly to the librarian. The librarian handles `DONE` without a preceding `COMPLETE`.
+- **`project feedback`** — any agent can log qualitative observations (`project feedback "<note>"`) to a timestamped, role-attributed file. Feeds skill refinement in later sessions without bloating context.
+- **Worktree lifecycle rules** — documented creation, cleanup, and orphan detection. `project cleanup` cross-references worktrees with the state file and removes orphans. Orchestrator runs it at project start and end.
+- **Recovery after restart** — `project recover` diagnoses the project state after a crash: which agents are reachable, which have resumable session IDs, worktree status, and recent signals. Orchestrator skill includes a full reboot-recovery procedure (resume librarian first, then workers).
+- **Merged shutdown/reuse checkpoint** — worker completion is now a single decision point (Step 6): evaluate reuse → assign next ticket or full shutdown (`project stop` + `herdr pane close`). No more separate steps that the orchestrator can skip.
+- **Orchestrator communication patterns** — explicit guidance on `project prompt` (fire-and-forget for assignments), `project prompt --wait` (boot prompts only), and `project ask` (blocking questions). Anti-pattern: never `--wait` on worker execution.
+- **`project observe`** — read-only snapshot of agents, recent signals, active blockers, and worktree state. Non-blocking status check for humans.
+- **Guided tour** — new `/guided-tour` skill. Spawns a librarian and one worker on a fake ticket, pauses at each signal to explain what's happening, and prompts the developer to try messaging agents. Designed for first-time users.
+- **Daily auto-check for plugin updates** — the `project` CLI checks once per day (background, non-blocking) and prints a one-liner if the plugin has updates available.
+- **Failure modes catalog** — `docs/failure-modes.md` documents known failure modes (librarian lag, signal loss, scope creep, stale worktrees, context collapse, orchestrator SPOF) with symptoms, detection, and recovery.
+
 ## 0.6.0
 
 - **`COMPLETE` / `DONE` signal split** — `DONE` is replaced by `COMPLETE` for the common case (PR opened, implementation complete). `DONE` is now optional, only for post-merge verification (data migrations, production checks). Most tickets only send `COMPLETE`.
-- **Signals flow through the librarian** — workers send `COMPLETE` and `DONE` to the librarian only. The librarian transitions Jira, stores operational notes, routes to the watcher and orchestrator. Workers no longer signal the orchestrator directly for completion. Reduces duplicate token burn.
+- **Signals flow through the librarian** — workers send `COMPLETE` and `DONE` to the librarian only. The librarian transitions tickets, stores operational notes, routes to the watcher and orchestrator. Workers no longer signal the orchestrator directly for completion. Reduces duplicate token burn.
 - **Watcher agent** — new long-lived CI monitor role (`start-project/watcher.md`). Spawned alongside the librarian at epic start. Receives `WATCH` assignments from the librarian, polls CI status, reports failures directly to workers, reports green to the librarian. Doesn't fix code, doesn't talk to the orchestrator.
 - **Signal economy principle** — new guidance in CLAUDE.md and DESIGN.md: minimize inter-agent chatter, one routing point per lifecycle event. Design signals so each event has a single routing agent rather than fanning out to multiple recipients.
 - **Workers include operational notes in `COMPLETE`** — deploy timing, environment quirks, fragile steps. The librarian stores these alongside diff summaries for future worker queries.
@@ -47,4 +63,4 @@
 - `project` CLI: init, register, prompt, ask, read, roster, status
 - Worktree-per-ticket workflow
 - Dependency DAG with wave-based scheduling
-- Librarian tracks merged diffs, manages Jira transitions, advises on worker reuse
+- Librarian tracks merged diffs, manages ticket transitions, advises on worker reuse
