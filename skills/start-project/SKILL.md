@@ -507,11 +507,11 @@ This applies to workers and testers. The librarian and researcher stay up for th
 
 ## Step 7: Completion
 
-When all tickets are done and all PRs are merged:
+When the librarian sends `PROJECT_COMPLETE` (all tickets done, all PRs merged):
 
-1. Tell the librarian:
+1. Ask the librarian for a final summary:
    ```bash
-   project prompt librarian "All tickets in project APP-XXXX are complete. Transition the project to Done and summarize the full scope of changes across all PRs." --wait --timeout 120000
+   project ask librarian "Summarize the full scope of changes across all PRs for the project."
    ```
 2. Clean up remaining worktrees (catches sequential-chain worktrees and any missed during wave transitions):
    ```bash

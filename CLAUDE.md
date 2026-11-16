@@ -34,7 +34,9 @@ docs/
 
 ## Running a project
 
-Start a project with `/start-project <epic-key>` in a Claude Code session.
+**From inside Claude Code:** `/start-project <epic-key>` — the orchestrator runs in your current session.
+
+**From the terminal:** `project start <epic-key> "Project Label"` — creates a Herdr workspace with a dedicated orchestrator agent and kicks off `/start-project` in that workspace. The orchestrator lives in its own workspace so it doesn't share your session's context.
 
 ### Demo mode (guided tour)
 

@@ -140,8 +140,8 @@ When the user confirms the task is ready (says something like 'yes, task is read
 
 Signal protocol for later:
   Worker STARTING — DEMO-TASK-001  →  ACK it
-  Worker DONE — DEMO-TASK-001  →  Store the completion AND relay to the orchestrator:
-    project prompt orchestrator 'DONE — DEMO-TASK-001 complete. <one-line summary from worker>'
+  Worker DONE — DEMO-TASK-001  →  Store the completion. This is the only task, so the project is complete. Signal:
+    project prompt orchestrator 'PROJECT_COMPLETE — DEMO-TASK-001 is done. All tasks finished.'
   When the user asks what happened, reflect the updated state.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
@@ -251,7 +251,7 @@ The worker:
 
 The librarian reflects the completion signal and updated state.
 
-**After the user has seen the librarian's response**, print the tour wrap-up (you'll see the user come back to the orchestrator pane, or you can send this once you notice the DONE signal has been relayed):
+**After the user has seen the librarian's response**, print the tour wrap-up (you'll see the user come back to the orchestrator pane, or you can send this once you receive the PROJECT_COMPLETE signal from the librarian):
 
 ## Step 7: Tour close
 

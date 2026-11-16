@@ -84,8 +84,8 @@ Workers and the orchestrator send you lifecycle signals. Transition the ticket u
 |--------|------|------------|
 | `STARTING — APP-XXXX` | Worker | → In Progress |
 | `COMPLETE — PR #N for APP-XXXX` | Worker | → In Code Review (relay to orchestrator + watcher) |
-| `DONE — APP-XXXX` (fast-path, no prior COMPLETE) | Worker | → Done (relay to orchestrator) |
-| `DONE — APP-XXXX verified` | Worker | → Done (only for post-merge verification) |
+| `DONE — APP-XXXX` (fast-path, no prior COMPLETE) | Worker | → Done (check DAG, signal only if actionable) |
+| `DONE — APP-XXXX verified` | Worker | → Done (check DAG, signal only if actionable) |
 | `PR #N merged for APP-XXXX` | Orchestrator | → Acceptance Test or Done |
 
 For spike/research tickets: when a research agent reports its findings to you, close the spike ticket.
@@ -112,25 +112,18 @@ project prompt orchestrator "COMPLETE — PR #N for APP-XXXX. Test brief: <if wo
 
 For follow-up PRs (worker sends another `COMPLETE` with a new PR number), repeat the same steps — the watcher adds the new PR to its watch list.
 
-## DONE signal — fast-path (no preceding COMPLETE)
+## DONE signal handling
 
-When a worker sends `DONE` without a preceding `COMPLETE`, the task was marked fast-path by the orchestrator — trivial changes committed directly to the branch with no PR or review cycle. Transition the ticket straight to Done (step through intermediate statuses as needed) and relay to the orchestrator:
+When a worker sends `DONE` (with or without a prior `COMPLETE`), transition the ticket to Done (step through intermediate statuses as needed), then **check the DAG before signaling anyone**:
 
-```bash
-project prompt orchestrator "DONE — APP-XXXX (fast-path). <one-line summary from worker>"
-```
+1. **Dependency cleared → downstream unblocked:** Send `UNBLOCKED` to the orchestrator (see DAG tracking below). This is the primary signal — the orchestrator needs to spawn workers.
+2. **Last ticket in the project done:** Send `PROJECT_COMPLETE` to the orchestrator:
+   ```bash
+   project prompt orchestrator "PROJECT_COMPLETE — all tickets in APP-XXXX are done. <one-line summary>"
+   ```
+3. **Neither — other tickets still in progress, nothing newly unblocked:** Store the completion. No signal to the orchestrator — it doesn't need to act.
 
-Check the DAG for downstream unblocks, same as any completion.
-
-## DONE signal — post-merge verification
-
-When a worker sends `DONE` after a prior `COMPLETE`, the worker has completed post-merge acceptance work — data migration verified, production checks passed. Transition the ticket to Done and relay to the orchestrator:
-
-```bash
-project prompt orchestrator "DONE — APP-XXXX verified in production. <one-line summary>"
-```
-
-Most tickets won't send `DONE` — they complete through the normal merge flow.
+**Don't relay DONE unconditionally.** Every signal burns tokens in the orchestrator's context. Only signal when the orchestrator needs to act (spawn workers or wrap up the project).
 
 ## Research findings
 
