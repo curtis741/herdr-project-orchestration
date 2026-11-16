@@ -232,11 +232,16 @@ cmd_start() {
   # Initialize the project with the workspace ID
   eval "$(cmd_init "$name" "$ws_id")"
 
-  # Start a Claude agent in the new workspace's root pane
-  herdr agent start orchestrator --kind claude --pane "$pane_id" >&2 || {
-    echo "error: failed to start orchestrator agent" >&2
-    exit 1
-  }
+  # Wait for the pane shell to be ready, then start the agent
+  local attempts=0
+  while ! herdr agent start orchestrator --kind claude --pane "$pane_id" 2>/dev/null | jq -e '.result' >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [[ $attempts -ge 10 ]]; then
+      echo "error: pane $pane_id not ready after 5s — failed to start orchestrator agent" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
   echo "orchestrator agent started in $pane_id" >&2
 
   # Register the orchestrator with the correct pane ID
