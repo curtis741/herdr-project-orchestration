@@ -72,6 +72,10 @@ Print the signal log. Default: last 50 entries.
 
 Log an orchestrator decision (wave transition, spawn, etc.).
 
+### `project observe`
+
+Read-only snapshot of the project: agents and their status, recent signals, active blockers, and worktree state. Non-blocking — useful for checking in without interrupting agents.
+
 ## Global flags
 
 - `--project <name>` — override `$HERDR_PROJECT`
