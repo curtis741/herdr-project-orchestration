@@ -34,7 +34,20 @@ If either fails, tell the user what's missing and stop.
 
 ## Step 0: Tour start
 
-Create the workspace and initialize:
+Check if a project is already initialized:
+
+```bash
+echo $HERDR_PROJECT
+```
+
+**If set** (`project start` already ran), the workspace exists — do NOT create another one. Get the workspace ID from the state file:
+
+```bash
+project info
+project register orchestrator
+```
+
+**If not set**, create the workspace and initialize:
 
 ```bash
 herdr workspace create --cwd "$PWD" --label "Guided Tour (DEMO)" --focus
