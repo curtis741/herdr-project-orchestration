@@ -72,8 +72,8 @@ usage() {
 Usage: project <command> [args...]
 
 Commands:
-  start <project-name> [workspace-label]
-                                   Create workspace, init project, register orchestrator
+  start <epic-key> [workspace-label]
+                                   Create workspace, start orchestrator, run /start-project
   init <project-name> [workspace-id]  Create a project state file (orchestrator only)
   register <role>                   Register this agent and signal READY to orchestrator
   stop <role>                      Stop an agent (preserves session ID for resume)
@@ -192,8 +192,8 @@ cmd_start() {
   local name="${1:-}"
   local label="${2:-}"
   if [[ -z "$name" ]]; then
-    echo "usage: project start <project-name> [workspace-label]" >&2
-    echo "  Creates a workspace, initializes the project, and starts the orchestrator agent." >&2
+    echo "usage: project start <epic-key> [workspace-label]" >&2
+    echo "  Creates a workspace, starts an orchestrator agent, and runs /start-project." >&2
     exit 1
   fi
 
@@ -248,8 +248,10 @@ cmd_start() {
   export HERDR_PROJECT="$name"
   cmd_register orchestrator "$pane_id"
 
-  echo "project started: $name (workspace $ws_id)" >&2
-  echo "ready — switch to workspace $ws_id and run /start-project <epic-key>" >&2
+  # Prompt the orchestrator to load the skill
+  herdr agent prompt "$pane_id" "/start-project $name" >&2
+
+  echo "project started: $name (workspace $ws_id, pane $pane_id)" >&2
 }
 
 cmd_register() {

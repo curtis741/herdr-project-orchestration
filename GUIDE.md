@@ -36,13 +36,13 @@ When an agent messages a stopped agent, the CLI auto-escalates to the orchestrat
 
 The orchestrator reads the tickets, shows you the plan, and starts spawning agents once you confirm.
 
-**Manual setup.** If you want to create the workspace and project first (e.g. to customize the workspace before the orchestrator runs):
+**From the terminal.** If you prefer to kick off a project without being inside a Claude session:
 
 ```bash
-eval "$(project start <project-name> "My Project (APP-1234)")"
+project start APP-1234 "User Auth Migration"
 ```
 
-This creates a Herdr workspace, initializes the project state file, and registers the orchestrator. Then run `/start-project <epic-key>` — it will detect the existing project and skip workspace creation.
+This creates a Herdr workspace, starts a Claude orchestrator agent, and tells it to run `/start-project APP-1234`. Switch to the new workspace to interact with it.
 
 **Option 2: Guided tour.** An interactive walkthrough that spawns a researcher, librarian, and one worker. You drive each step by talking to agents in their panes — one automatic signal chain fires so you can see the handoff:
 
