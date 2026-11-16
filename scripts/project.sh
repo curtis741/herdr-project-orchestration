@@ -209,7 +209,7 @@ cmd_start() {
 
   # Create the workspace
   local ws_output
-  ws_output=$(herdr workspace create --cwd "$PWD" --label "$label" --no-focus 2>&1) || {
+  ws_output=$(herdr workspace create --cwd "$PWD" --label "$label" --env "HERDR_PROJECT=$name" --no-focus 2>&1) || {
     echo "error: failed to create workspace" >&2
     echo "$ws_output" >&2
     exit 1

@@ -77,14 +77,22 @@ If you can't determine the repo from labels, ask the user.
 
 One workspace holds everything for this project — orchestrator tab, librarian tab, and worker tabs.
 
-**If `HERDR_PROJECT` is already set** (the user ran `project start` before invoking you), skip workspace creation — the workspace and state file already exist. Verify with `project info`, then register yourself if not already registered:
+First, check if a project is already initialized:
+
+```bash
+echo $HERDR_PROJECT
+```
+
+**If set** (`project start` already ran), the workspace and state file exist — do NOT create another workspace. Verify with `project info` and register if needed:
 
 ```bash
 project info
 project register orchestrator
 ```
 
-**Otherwise**, use `project start` to create the workspace, initialize the state file, and register the orchestrator in one step:
+Read the workspace ID from `project info` and use it for all tab creation below.
+
+**If not set**, create everything from scratch:
 
 ```bash
 eval "$(project start <project-name> "<epic human name> (APP-XXXX)")"
