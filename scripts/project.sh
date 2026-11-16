@@ -193,7 +193,7 @@ cmd_start() {
   local label="${2:-}"
   if [[ -z "$name" ]]; then
     echo "usage: project start <project-name> [workspace-label]" >&2
-    echo "  Creates a workspace, initializes the project, and starts the orchestrator." >&2
+    echo "  Creates a workspace, initializes the project, and starts the orchestrator agent." >&2
     exit 1
   fi
 
@@ -225,16 +225,26 @@ cmd_start() {
     echo "$ws_output" >&2
     exit 1
   fi
-  echo "workspace created: $ws_id" >&2
+  local pane_id
+  pane_id=$(echo "$ws_output" | jq -r '.result.root_pane.pane_id')
+  echo "workspace created: $ws_id (pane $pane_id)" >&2
 
   # Initialize the project with the workspace ID
   eval "$(cmd_init "$name" "$ws_id")"
 
-  # Register the orchestrator
-  cmd_register orchestrator
+  # Start a Claude agent in the new workspace's root pane
+  herdr agent start orchestrator --kind claude --pane "$pane_id" >&2 || {
+    echo "error: failed to start orchestrator agent" >&2
+    exit 1
+  }
+  echo "orchestrator agent started in $pane_id" >&2
+
+  # Register the orchestrator with the correct pane ID
+  export HERDR_PROJECT="$name"
+  cmd_register orchestrator "$pane_id"
 
   echo "project started: $name (workspace $ws_id)" >&2
-  echo "export HERDR_PROJECT=$name"
+  echo "ready — switch to workspace $ws_id and run /start-project <epic-key>" >&2
 }
 
 cmd_register() {
