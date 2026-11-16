@@ -104,7 +104,7 @@ Three commands, each with different blocking behavior:
 **Stay responsive.** The orchestrator must be available for incoming signals, user messages, and status checks at all times. Every `--wait` or `ask` blocks your context until the target responds or the timeout expires — use them only when you genuinely can't proceed without the response.
 
 - **Boot prompts** use `--wait` because the assignment must not arrive before the agent is listening. These are short waits (READY comes in seconds).
-- **Assignments and lifecycle signals** use plain `prompt` — the worker signals back (STARTING, PR_OPEN, BLOCKED) when it has something to report.
+- **Assignments and lifecycle signals** use plain `prompt` — the worker signals back (STARTING, COMPLETE, BLOCKED) when it has something to report.
 - **Librarian/researcher queries** use `ask` when you need the answer to choose the next action (worker reuse, unblock decisions).
 
 **Anti-pattern: blocking on worker execution.** Never `--wait` on a worker assignment. The worker may take 10+ minutes to implement its ticket — during that time you can't respond to other workers, the user, or the librarian. Send the assignment with plain `prompt` and move on to the next worker or back to monitoring.

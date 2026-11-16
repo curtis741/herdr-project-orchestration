@@ -12,7 +12,7 @@ A 10-ticket project doesn't fit in one agent's context. Loading full codebase co
 |------|-------|-----------------|----------|
 | **Orchestrator** | `start-project` | Lightweight: ticket list, DAG, status | Full project |
 | **Worker** | `project-worker` | Heavy: full CLAUDE.md chain, pack context, one ticket | One ticket or one sequential chain |
-| **Librarian** | `project-librarian` | Medium: summaries of merged changes | Full project |
+| **Librarian** | `librarian` | Medium: summaries of merged changes | Full project |
 
 The orchestrator never writes code. Workers never manage other workers. The librarian never implements — it just knows what was merged and answers questions.
 
