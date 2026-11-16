@@ -80,5 +80,5 @@ Skills must also be **tracker-agnostic**. Don't reference specific tools (e.g. "
 ## Releasing
 
 - Version lives in `herdr-plugin.toml` (single source of truth)
-- `CHANGELOG.md` entries are sent to running orchestrators on `herdr plugin update` — only include changes that affect behavior of running agents (new commands, changed signals, skill changes). Internal cleanup, repo structure, or dev tooling changes don't belong.
+- `CHANGELOG.md` entries are sent to the running orchestrator on `herdr plugin update` — only include changes that affect behavior of running agents (new commands, changed signals, skill changes). Internal cleanup, repo structure, or dev tooling changes don't belong. The orchestrator does not fan out updates to other agents — workers are short-lived and pick up new skills on recycle; long-lived agents get recycled at the user's discretion.
 - After any batch of changes, run a fresh subagent to audit for identifiable information (company names, internal URLs, repo paths, product names). Repeat until it comes back clean. The audit agent should have no prior context about what was there.

@@ -219,6 +219,14 @@ The test brief is the critical handoff artifact — without it, the tester has n
 6. Performance — response time comparison between backends
 7. Real usage — query access logs for actual request patterns
 
+### Plugin updates are orchestrator-only
+
+When the user runs `herdr plugin update`, the CHANGELOG diff goes to the orchestrator — not to every agent. The orchestrator tells the user what changed and they decide whether any running agent needs a recycle.
+
+Workers are short-lived — most finish before an update matters, and recycled/restarted workers load updated skills automatically. Long-lived agents (librarian, watcher, researcher) idle most of the time; injecting behavioral changes mid-session is more likely to confuse than help. The orchestrator surfaces the decision to the user, who can recycle specific agents if the update warrants it.
+
+This follows signal economy: fanning the same CHANGELOG to N agents burns tokens in every context for information most can't act on mid-task. One routing point (the orchestrator) is enough.
+
 ### State recovery via project state file
 
 The `project` CLI maintains a state file at `~/.herdr/projects/<project-name>.json` mapping role → pane ID + session ID. Agents self-register via `project register <role>` during boot (auto-detects pane ID and session ID). The state file is never deleted — `project stop` marks agents as stopped but preserves all data. The project name is injected as `HERDR_PROJECT` via `herdr tab create --env`.

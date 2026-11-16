@@ -55,7 +55,7 @@
 - **`project research "<question>"`** — async research command. Routes to researcher if registered, falls back to orchestrator. Checks if the target is busy before sending. Answer comes back via `project prompt <caller>`.
 - **Two-phase boot for all agents** — librarian and researcher now follow the same boot pattern as workers: short identity prompt → READY → full assignment payload.
 - **Workers message researchers directly** — workers use `project research` instead of routing through the orchestrator.
-- **Upgrade notifications** — `herdr plugin update` notifies running orchestrators of skill/CLI changes so they can cascade to agents.
+- **Upgrade notifications** — `herdr plugin update` notifies the running orchestrator of skill/CLI changes.
 
 ## 0.1.0
 
