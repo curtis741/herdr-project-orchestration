@@ -36,10 +36,18 @@ When an agent messages a stopped agent, the CLI auto-escalates to the orchestrat
 
 The orchestrator reads the tickets, shows you the plan, and starts spawning agents once you confirm.
 
-**Option 2: Guided tour.** An interactive walkthrough that spawns a small set of agents and walks you through the signal flow step by step, with pauses to explain what's happening and prompts for you to try messaging agents yourself:
+**Manual setup.** If you want to create the workspace and project first (e.g. to customize the workspace before the orchestrator runs):
+
+```bash
+eval "$(project start <project-name> "My Project (APP-1234)")"
+```
+
+This creates a Herdr workspace, initializes the project state file, and registers the orchestrator. Then run `/start-project <epic-key>` — it will detect the existing project and skip workspace creation.
+
+**Option 2: Guided tour.** An interactive walkthrough that spawns a researcher, librarian, and one worker. You drive each step by talking to agents in their panes — one automatic signal chain fires so you can see the handoff:
 
 ```
-/guided-tour
+/start-project DEMO-001
 ```
 
 Takes about 5 minutes. After one run, you'll understand the roles, how signals flow, and how to participate.

@@ -17,9 +17,17 @@ which project
 
 If it fails, stop — this skill requires the project-orchestration plugin (`herdr plugin install curtis741/herdr-project-orchestration`).
 
+## Mode detection
+
+Parse the project key from the user's message (e.g. `APP-1234`).
+
+- **`DEMO-` prefix** → guided tour mode. Run `/guided-tour` and stop — the tour skill handles everything.
+- **`DOG-` prefix** → dogfood mode. See `docs/dogfood.md`.
+- **Anything else** → normal mode (continue below).
+
 ## Step 1: Load the project
 
-Parse the project key from the user's message (e.g. `APP-1234`). Use the ticket tracker's MCP tools to:
+Use the ticket tracker's MCP tools to:
 
 1. Fetch the project and its child tickets
 2. For each ticket, read its summary, description, and **depends-on links** (`is blocked by` / `depends on`)
@@ -67,27 +75,22 @@ If you can't determine the repo from labels, ask the user.
 
 ## Step 3: Create the project workspace and initialize
 
-One workspace holds everything for this project — orchestrator tab, librarian tab, and worker tabs:
+One workspace holds everything for this project — orchestrator tab, librarian tab, and worker tabs.
+
+**If `HERDR_PROJECT` is already set** (the user ran `project start` before invoking you), skip workspace creation — the workspace and state file already exist. Verify with `project info`, then register yourself if not already registered:
 
 ```bash
-herdr workspace create --cwd "$PWD" --label "<epic human name> (APP-XXXX)" --focus
-```
-
-Use the project's human-readable name as the label — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to.
-
-Note the workspace ID from the response. Pick a project name — lowercase project key (e.g. `app-1234`) or ask the user if ambiguous. Initialize the project and export the env var:
-
-```bash
-eval "$(project init <project-name> <workspace-id>)"
-```
-
-This creates the state file and exports `HERDR_PROJECT` in your shell.
-
-Register yourself (the orchestrator):
-
-```bash
+project info
 project register orchestrator
 ```
+
+**Otherwise**, use `project start` to create the workspace, initialize the state file, and register the orchestrator in one step:
+
+```bash
+eval "$(project start <project-name> "<epic human name> (APP-XXXX)")"
+```
+
+The project name should be the lowercase project key (e.g. `app-1234`). The workspace label should be the project's human-readable name — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to.
 
 All tabs you create below get `--env HERDR_PROJECT=<project-name>` so every agent resolves the same state file automatically.
 

@@ -72,6 +72,8 @@ usage() {
 Usage: project <command> [args...]
 
 Commands:
+  start <project-name> [workspace-label]
+                                   Create workspace, init project, register orchestrator
   init <project-name> [workspace-id]  Create a project state file (orchestrator only)
   register <role>                   Register this agent and signal READY to orchestrator
   stop <role>                      Stop an agent (preserves session ID for resume)
@@ -183,6 +185,55 @@ cmd_init() {
     > "$f"
   echo "project initialized: $name → $f" >&2
   # Print the export so the caller can eval it: eval "$(project init my-project wW)"
+  echo "export HERDR_PROJECT=$name"
+}
+
+cmd_start() {
+  local name="${1:-}"
+  local label="${2:-}"
+  if [[ -z "$name" ]]; then
+    echo "usage: project start <project-name> [workspace-label]" >&2
+    echo "  Creates a workspace, initializes the project, and starts the orchestrator." >&2
+    exit 1
+  fi
+
+  if ! command -v herdr &>/dev/null; then
+    echo "error: herdr CLI not found" >&2
+    exit 1
+  fi
+
+  # Default workspace label to the project name
+  if [[ -z "$label" ]]; then
+    label="$name"
+  fi
+
+  # Create the workspace
+  local ws_output
+  ws_output=$(herdr workspace create --cwd "$PWD" --label "$label" --no-focus 2>&1) || {
+    echo "error: failed to create workspace" >&2
+    echo "$ws_output" >&2
+    exit 1
+  }
+  local ws_id
+  ws_id=$(echo "$ws_output" | jq -r '.result.workspace.workspace_id') || {
+    echo "error: could not parse workspace ID from herdr output" >&2
+    echo "$ws_output" >&2
+    exit 1
+  }
+  if [[ -z "$ws_id" || "$ws_id" == "null" ]]; then
+    echo "error: workspace creation returned no ID" >&2
+    echo "$ws_output" >&2
+    exit 1
+  fi
+  echo "workspace created: $ws_id" >&2
+
+  # Initialize the project with the workspace ID
+  eval "$(cmd_init "$name" "$ws_id")"
+
+  # Register the orchestrator
+  cmd_register orchestrator
+
+  echo "project started: $name (workspace $ws_id)" >&2
   echo "export HERDR_PROJECT=$name"
 }
 
@@ -1368,6 +1419,7 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
+  start)      cmd_start "$@" ;;
   init)       cmd_init "$@" ;;
   register)    cmd_register "$@" ;;
   stop)        cmd_stop "$@" ;;

@@ -9,11 +9,11 @@ platforms = ["linux", "macos"]
 command = ["bash", "scripts/setup.sh"]
 
 [[actions]]
-id = "init"
-title = "Initialize a project"
-description = "Create a new project state file and set HERDR_PROJECT for this workspace."
+id = "start"
+title = "Start a project"
+description = "Create a workspace, initialize the project, and register the orchestrator. Run: project start <name> [label]"
 contexts = ["pane", "workspace"]
-command = ["bash", "-c", "read -p 'Project name: ' name; read -p 'Workspace ID (optional): ' ws; eval \"$(project init \"$name\" \"$ws\")\""]
+command = ["bash", "-c", "echo 'Usage: project start <project-name> [workspace-label]'; echo 'Run this directly in your terminal — plugin actions cannot pass arguments.'"]
 
 [[actions]]
 id = "status"

@@ -23,7 +23,7 @@ skills/
   start-project/researcher.md # Researcher role definition (read by agents, not a skill)
   project-worker/SKILL.md   # Worker skill
   dry-run-project/SKILL.md  # Signal protocol test harness
-  guided-tour/SKILL.md     # Interactive onboarding walkthrough
+  guided-tour/SKILL.md     # DEMO mode — interactive onboarding via /start-project DEMO-XXX
 docs/
   design.md                 # What the system is and how it works
   decisions.md              # Why: key decisions, open questions, feedback log
@@ -35,6 +35,12 @@ docs/
 ## Running a project
 
 Start a project with `/start-project <epic-key>` in a Claude Code session.
+
+### Demo mode (guided tour)
+
+When the epic key starts with `DEMO-`, the orchestrator runs a **guided tour** — a scripted walkthrough where the user drives each step by talking to agents in their panes. Spawns a researcher, librarian, and one worker on a trivial task. One automatic signal chain fires to show the handoff machinery.
+
+Use this to onboard new users before running a real project.
 
 ### Dogfood mode
 

@@ -1,19 +1,27 @@
 ---
 name: guided-tour
-description: "Interactive guided tour of project orchestration. Spawns a librarian and one worker on a trivial task, pauses at each signal to explain what's happening, and prompts the developer to message agents themselves. After one run, the developer understands roles, signals, and how to participate. Requires Herdr."
+description: "Interactive guided tour of project orchestration. Spawns a researcher, librarian, and one worker on a trivial demo task. Each stage waits on an explicit human action in a named pane — one automatic signal chain is shown live so the handoff is visible. Use when the user says 'start project DEMO-001' or any DEMO- prefix. Requires Herdr."
 ---
 
-# guided-tour — Learn by Doing
+# guided-tour — DEMO Mode
 
-An interactive walkthrough of multi-agent project orchestration. You (the tour guide) spawn a small set of agents, pause at each stage to explain what's happening and why, and invite the developer to try things themselves.
+An interactive walkthrough of multi-agent project orchestration. You (the orchestrator) run a scripted tour where the user causes almost every step by talking to agents in their panes. One automatic signal chain fires so the user sees the handoff machinery.
 
-**Audience:** someone who just installed the plugin and wants to understand the system before running a real project.
+**Audience:** someone who just installed the plugin and wants to understand roles, signals, and how to participate before running a real project.
 
-**Goal:** after one guided tour, the developer understands:
-- The roles (orchestrator, librarian, worker) and why they're separated
-- How signals flow and why there's a single routing point
-- How to message agents and ask questions
-- When to jump in vs. let the system run
+**Goal:** after one tour, the user understands:
+- Roles are addressable — you talk to them by name
+- Each role refuses work outside its boundary
+- Knowledge and state move by signal, not by re-explaining
+- The user stays in the loop; their actions advance the chain
+
+## Rules
+
+- Every stage waits on an explicit human action in a named pane (except one automatic hop — step 4).
+- Role blurbs are short (3–5 lines): what this agent is for + what it refuses to do.
+- One meaningful action per stop. Demo work is trivial; the point is the handoff.
+- If the user does nothing, nothing advances.
+- Tour text always tells the user where to go next and what to do there.
 
 ## Prerequisites
 
@@ -22,218 +30,252 @@ test "${HERDR_ENV:-}" = 1
 which project
 ```
 
-If either fails, tell the developer what's missing and stop.
+If either fails, tell the user what's missing and stop.
 
-## Tone
+## Step 0: Tour start
 
-Conversational, not scripted. Explain concepts in your own words as you go — don't dump a wall of text. Each explanation should be 2-4 sentences, max. The agents doing things is the lesson; your narration connects the dots.
-
-## Overview for the developer
-
-Before starting, give the developer a brief overview:
-
-> We're going to spin up a small project with three agents — an orchestrator (that's me), a librarian, and one worker — on a fake ticket. I'll pause at each step to explain what's happening and why. At a few points I'll ask you to try things yourself — message an agent, ask the librarian a question. The whole thing takes about 5 minutes.
-
-## Step 1: Create the workspace and initialize
+Create the workspace and initialize:
 
 ```bash
-herdr workspace create --cwd "$PWD" --label "Guided Tour" --focus
+herdr workspace create --cwd "$PWD" --label "Guided Tour (DEMO)" --focus
 ```
 
 Note the workspace ID. Initialize the project:
 
 ```bash
-project init TOUR <workspace-id>
+eval "$(project init demo <workspace-id>)"
 project register orchestrator
 ```
 
-**Explain to the developer:**
-> Every project gets a workspace — a container for all the agent tabs. The `project` CLI tracks which agents are alive and routes messages between them by role name. I just registered myself as the orchestrator.
+Print to the user:
 
-## Step 2: Spawn the librarian
+> **Welcome to the guided tour of project orchestration.**
+>
+> I only start and sequence agents — I don't research or implement.
+>
+> This tour has four agents. At each stop, I'll tell you which pane to go to and what to say. Your actions drive the chain — if you do nothing, nothing advances. One signal chain fires automatically so you can see the handoff.
+>
+> First, go to the **researcher** pane and tell it to figure out what this demo needs.
+
+Then spawn the researcher (see below). Optionally spawn the librarian now too so it's ready for step 2.
+
+### Spawn the researcher
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=TOUR --no-focus
-herdr agent start tour-librarian --kind claude --pane <pane_id>
-project register librarian <pane_id>
+herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "researcher" --env HERDR_PROJECT=demo --no-focus
+herdr agent start demo-researcher --kind claude --pane <pane_id>
 ```
 
-Boot the librarian with a simplified role for the tour:
+Boot the researcher:
 
 ```bash
-herdr agent prompt <pane_id> "GUIDED TOUR — You are the project librarian. This is a guided tour, not a real project.
+herdr agent prompt <pane_id> "GUIDED TOUR — You are the project researcher.
 
-Your job: receive signals from the worker and relay them to the orchestrator. You also answer questions about the project.
+Your blurb (say this if anyone asks what you do):
+  I dig into detail and collapse it into tasks and domain notes.
+  I don't implement and I don't own ticket state.
+  My job is to build the map so later agents don't rediscover everything.
 
-The project has one ticket:
-  TOUR-001: 'Add a greeting endpoint' (no dependencies)
+This is a guided tour, not a real project.
 
-Signal protocol:
-  STARTING — TOUR-001  →  respond: [librarian] ACK STARTING — TOUR-001 transitioned to In Progress
-  COMPLETE — PR #1 for TOUR-001  →  respond: [librarian] ACK COMPLETE — TOUR-001 transitioned to In Code Review. Then:
-    project prompt orchestrator 'COMPLETE — PR #1 for TOUR-001.'
-  PR #1 merged for TOUR-001  →  respond: [librarian] ACK MERGED — TOUR-001 transitioned to Done. No more tickets — DAG complete.
+When the user asks you to map the demo and propose tasks (or similar), do this:
+1. Reply with the task you've identified:
+   DEMO-TASK-001: Add a one-line greeting to TOUR_NOTES.md
+   (Trivial on purpose — the point is the handoff, not the work.)
+2. Report the task to the librarian:
+   project prompt librarian 'RESEARCH FINDING — Discovery complete. One task: DEMO-TASK-001 (add a one-line greeting to TOUR_NOTES.md). No dependencies.'
+3. Tell the user:
+   'Go to the **librarian** pane and confirm it received the task.'
 
-When anyone asks you a question, answer helpfully. You know:
-  - TOUR-001 is about adding a GET /hello endpoint that returns { 'message': 'Hello, world!' }
-  - The project uses a standard REST pattern
-  - No database changes needed
+If the user asks about your boundaries, explain: you investigate and propose tasks, but you don't implement anything or manage ticket state.
+
+All agents use 'project prompt <role> <message>' to communicate. Your role is 'researcher'.
+
+Run: project register researcher
+Then reply 'ready' and wait for the user." --wait --timeout 60000
+```
+
+### Spawn the librarian (pre-stage for step 2)
+
+```bash
+herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=demo --no-focus
+herdr agent start demo-librarian --kind claude --pane <pane_id>
+```
+
+Boot the librarian:
+
+```bash
+herdr agent prompt <pane_id> "GUIDED TOUR — You are the project librarian.
+
+Your blurb (say this if anyone asks what you do):
+  I only track tasks and project state. I receive signals and answer 'what's the status / what changed?'
+  I don't dig into the domain and I don't write code.
+
+This is a guided tour, not a real project.
+
+When you receive a RESEARCH FINDING from the researcher about DEMO-TASK-001, store it.
+
+When the user asks what tasks you know about, reply:
+  DEMO-TASK-001: Add a one-line greeting to TOUR_NOTES.md
+  Status: todo (discovered by researcher, not yet assigned to a worker)
+
+When the user confirms the task is ready (says something like 'yes, task is ready', 'signal ready', 'ready for a worker', or similar), do this:
+1. Signal the orchestrator:
+   project prompt orchestrator 'TASK_READY — DEMO-TASK-001 is ready for a worker.'
+2. Tell the user:
+   'That signal goes to the orchestrator. Stay here a moment — you'll see the chain fire.'
+
+Signal protocol for later:
+  Worker STARTING — DEMO-TASK-001  →  ACK it
+  Worker DONE — DEMO-TASK-001  →  Store the completion. When the user asks what happened, reflect the updated state.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
-Do NOT load /project-librarian. Just follow the protocol above and answer questions naturally.
+Do NOT load /project-librarian. Follow the protocol above and answer questions naturally.
 
-Reply 'ready' when understood." --wait --timeout 60000
+Run: project register librarian
+Then reply 'ready' and wait." --wait --timeout 60000
 ```
 
-Confirm the librarian replied 'ready'.
+Now wait. The user drives the next steps.
 
-**Explain to the developer:**
-> The librarian is the knowledge base. In a real project, it ingests merged PRs and answers questions like "what interface did ticket X create?" It also manages ticket transitions — when a worker says STARTING, the librarian moves the ticket to In Progress. Workers never talk to the orchestrator about lifecycle events — everything routes through the librarian. This keeps the orchestrator lightweight and gives the librarian a complete picture of project state.
+## Step 1: Researcher — user maps the demo
 
-## Step 3: Spawn the worker
+**What happens:** The user goes to the researcher pane and says something like "Map the demo and propose tasks."
+
+The researcher responds with the task list (DEMO-TASK-001) and reports it to the librarian, then tells the user to go to the librarian.
+
+**You (orchestrator) do nothing here.** Wait for the signal chain to reach you later.
+
+## Step 2: Librarian — confirm task
+
+**What happens:** The user goes to the librarian pane and asks "What tasks do you know about?" (or similar).
+
+The librarian answers with DEMO-TASK-001 and its status.
+
+Then the librarian prompts the user: "Ready for the system to spin up a worker for that task? Confirm here (e.g. 'yes, task is ready')."
+
+**You (orchestrator) do nothing yet.** Wait for the librarian's TASK_READY signal.
+
+## Step 3: Librarian signals ready
+
+**What happens:** The user confirms the task is ready in the librarian pane.
+
+The librarian sends `TASK_READY — DEMO-TASK-001 is ready for a worker.` to you (the orchestrator).
+
+The librarian tells the user: "That signal goes to the orchestrator. Stay here a moment — you'll see the chain fire."
+
+## Step 4: Automatic hop — the one non-human advance
+
+**When you receive TASK_READY from the librarian, this fires automatically — no user action needed.**
+
+Tell the user:
+
+> The librarian's signal just arrived. Watch: I'm spawning a worker now. This is the only automatic step — the rest was all you.
+
+Spawn the worker:
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "TOUR-001" --env HERDR_PROJECT=TOUR --no-focus
-herdr agent start tour-001 --kind claude --pane <pane_id>
-project register tour-001 <pane_id>
+herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "worker — DEMO-TASK-001" --env HERDR_PROJECT=demo --no-focus
+herdr agent start demo-worker --kind claude --pane <pane_id>
 ```
 
 Boot the worker:
 
 ```bash
-herdr agent prompt <pane_id> "GUIDED TOUR — You are project worker tour-001. This is a guided tour, not a real project.
+herdr agent prompt <pane_id> "GUIDED TOUR — You are the project worker for DEMO-TASK-001.
 
-Your job: follow the signal protocol to simulate working on a ticket. Wait for instructions at each step.
+Your blurb (say this if anyone asks what you do):
+  I get one ticket, one worktree, one clean context.
+  I implement, signal completion, and usually shut down.
+  I don't manage other agents or own the project plan.
 
-Step 1: Send your READY signal now:
-  project prompt orchestrator 'READY — TOUR-001'
+This is a guided tour, not a real project.
 
-Then wait for your assignment from the orchestrator. Do not proceed until you receive it.
+Boot sequence:
+1. Run: project register demo-worker
+2. Signal READY:
+   project prompt orchestrator 'READY — demo-worker for DEMO-TASK-001'
+3. State your role briefly to the user:
+   'Worker ready. I'm here for DEMO-TASK-001: add a one-line greeting to TOUR_NOTES.md. Tell me to go when you're ready.'
 
-All agents use 'project prompt <role> <message>' to communicate. Your role is 'tour-001'.
+When the user tells you to go (or says 'do it', 'start', etc.):
+1. Signal the librarian:
+   project prompt librarian 'STARTING — DEMO-TASK-001'
+2. Create the file (this is the trivial demo work):
+   echo 'Hello from the guided tour!' > TOUR_NOTES.md
+3. Signal completion to the librarian:
+   project prompt librarian 'DONE — DEMO-TASK-001. Added greeting to TOUR_NOTES.md.'
+4. Tell the user:
+   'Done. Go back to the **librarian** and ask what just happened.'
+
+All agents use 'project prompt <role> <message>' to communicate. Your role is 'demo-worker'.
 Do NOT load /project-worker.
 
-Start with step 1 now." --wait --timeout 60000
+Start with the boot sequence now." --wait --timeout 60000
 ```
 
-**Explain to the developer (before the READY signal arrives):**
-> I just started a worker. In a real project, each worker gets its own git worktree — an isolated copy of the repo — and works on one ticket. The first thing every worker does is send a READY signal to the orchestrator. Watch for it...
+Wait for the READY signal from the worker. When it arrives, tell the user:
 
-Wait for the `READY — TOUR-001` signal.
+> The worker just booted and signaled READY. Go to the **worker** pane and tell it to do the task.
 
-**When it arrives, explain:**
-> There it is — the worker is ready for its assignment. In a real project, I'd send a ticket description, dependencies, and any context from the librarian. Let me send the assignment now.
+## Step 5: Worker — user triggers the work
 
-## Step 4: Send the assignment
+**What happens:** The user goes to the worker pane and tells it to go.
+
+The worker:
+1. Signals `STARTING` to the librarian
+2. Creates `TOUR_NOTES.md` with a greeting
+3. Signals `DONE` to the librarian
+4. Tells the user to go back to the librarian
+
+**You (orchestrator) do nothing.** Wait for the user to go to the librarian.
+
+## Step 6: Librarian — see the handoff land
+
+**What happens:** The user goes to the librarian pane and asks "What's the state of DEMO-TASK-001?" or "What just happened?"
+
+The librarian reflects the completion signal and updated state.
+
+**After the user has seen the librarian's response**, print the tour wrap-up (you'll see the user come back to the orchestrator pane, or you can send this once you notice the DONE signal has been relayed):
+
+## Step 7: Tour close
+
+Print:
+
+> **Tour complete.**
+>
+> You talked to each role by name. Each only did its job:
+> - The **researcher** mapped the work and proposed tasks
+> - The **librarian** tracked state and routed signals
+> - The **worker** implemented one thing and reported done
+> - **You** drove every step except one — the automatic spawn showed how signals keep things moving without you re-explaining
+>
+> In a real project you do the same thing — talk to roles when you want; signals keep the rest moving.
+>
+> To see what happened under the hood, try: `project observe` or `project log`
+>
+> **Ready for a real project?** Run `/start-project <epic-key>` with a Jira, Linear, or GitHub epic.
+
+Clean up:
 
 ```bash
-project prompt tour-001 "Your assignment:
-
-Ticket: TOUR-001
-Summary: Add a greeting endpoint
-Description: Add a GET /hello endpoint that returns { 'message': 'Hello, world!' }. This is a guided tour — don't write real code. Just follow the signal protocol.
-
-Next steps:
-1. Send: project prompt librarian 'STARTING — TOUR-001'
-2. Wait 10 seconds (simulating implementation work).
-3. Send: project prompt librarian 'COMPLETE — PR #1 for TOUR-001. No operational notes (tour).'
-4. Stop completely." --wait --timeout 120000
-```
-
-**Explain to the developer:**
-> The worker now has its assignment. Watch what happens next — the worker will signal the librarian (not me) that it's starting work. This is a key design choice: workers talk to the librarian for lifecycle events, and the librarian relays a compact summary to the orchestrator. This keeps my context clean — I don't need to see every detail of every worker's progress.
-
-## Step 5: Watch the signal cascade
-
-The expected sequence:
-1. **tour-001 → librarian:** `STARTING — TOUR-001`
-2. **librarian ACKs** the STARTING signal
-3. **tour-001 → librarian:** `COMPLETE — PR #1 for TOUR-001`
-4. **librarian → orchestrator:** `COMPLETE — PR #1 for TOUR-001.` (relay)
-
-As each signal arrives, narrate briefly:
-
-- On STARTING relay: "The librarian just acknowledged the worker started — in a real project, it would also transition the ticket to In Progress in the tracker."
-- On COMPLETE relay: "The worker finished and told the librarian. The librarian transitioned the ticket to In Code Review and relayed a compact summary to me. Notice the worker never messaged me directly — everything went through the librarian."
-
-## Step 6: Interactive — the developer tries messaging
-
-**Now pause and invite the developer to participate:**
-
-> Your turn. The agents are still running — you can talk to them. Try these:
->
-> 1. **Ask the librarian a question:** Type this in your terminal:
->    ```
->    project ask librarian "What does TOUR-001 do?"
->    ```
->    The librarian will answer based on what it knows about the project.
->
-> 2. **Check the project status:**
->    ```
->    project status
->    ```
->    This shows all registered agents and their current state.
->
-> 3. **Read the worker's output:**
->    ```
->    project read tour-001 --lines 20
->    ```
->    This shows what the worker has been doing without interrupting it.
->
-> Try at least one of these, then tell me when you're ready to continue.
-
-Wait for the developer to try things and say they're ready. Answer any questions they have about what they see.
-
-## Step 7: Simulate merge and wrap up
-
-```bash
-project prompt librarian "PR #1 merged for TOUR-001" --wait --timeout 60000
-```
-
-**Explain:**
-> I just told the librarian the PR was merged. In a real project, this happens after code review. The librarian transitions the ticket to Done and checks whether any downstream tickets are now unblocked. Since TOUR-001 has no dependents, the project is complete.
-
-## Step 8: Summary — what the developer learned
-
-Present a recap:
-
-> **What you just saw:**
->
-> - **Three roles, three context windows.** The orchestrator coordinates, the librarian tracks knowledge and state, workers implement. Each agent only carries the context it needs.
->
-> - **Single routing point.** Workers send lifecycle signals (STARTING, COMPLETE) to the librarian, not the orchestrator. The librarian relays a compact summary. This keeps the orchestrator's context clean for decision-making.
->
-> - **The `project` CLI.** All communication goes through `project prompt` (fire-and-forget) and `project ask` (blocking question). Roles are resolved automatically — no pane IDs to remember.
->
-> - **You can jump in anytime.** You saw this when you messaged the librarian yourself. In a real project, you can ask the librarian questions, check on workers, or message the orchestrator to change priorities.
->
-> **In a real project, you'd also see:**
-> - Multiple workers running in parallel on independent tickets
-> - Dependency tracking — the librarian detects when tickets are unblocked and signals the orchestrator to spawn the next wave
-> - A watcher monitoring CI and reporting failures directly to workers
-> - A researcher investigating domain questions so workers don't have to
->
-> **Ready to try for real?** Run `/start-project` with an epic key to orchestrate a real project.
-
-## Step 9: Clean up
-
-```bash
+rm -f TOUR_NOTES.md
 herdr workspace close <workspace-id>
 ```
 
 ## What this teaches
 
-- The three core roles and their boundaries
-- Why lifecycle signals route through the librarian
-- How `project prompt` and `project ask` work
-- That the developer can participate — messaging agents, reading output, asking questions
-- The building blocks that scale to multi-wave, multi-worker projects
+- Four roles and their boundaries (orchestrator, researcher, librarian, worker)
+- Signals flow through the librarian, not directly to the orchestrator
+- The user's actions drive the chain — agents wait, they don't auto-advance
+- One automatic hop shows what the machinery does on its own
+- `project prompt` / `project ask` for communication
 
 ## What this does NOT teach
 
-- Dependency DAGs and wave sequencing (use a real project or the dry run for that)
-- Worktree management
+- Dependency DAGs and wave sequencing (use a real project or `/dry-run-project`)
+- Worktree management and git isolation
 - The watcher and CI monitoring
-- The researcher role
 - Distill/restart for context pressure
 - Recovery after a crash
+- Concurrent workers
