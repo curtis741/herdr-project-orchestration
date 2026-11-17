@@ -35,11 +35,29 @@ The build step symlinks the `project` CLI and all skills automatically. Updates 
 
 ### Run a project
 
+**From inside Claude Code:**
+
 ```
 /start-project <epic-key>
 ```
 
-The orchestrator reads the tickets, shows you the plan (waves, dependencies, blockers), and starts spawning agents once you confirm. That's it.
+The orchestrator runs in your current session — reads the tickets, shows you the plan (waves, dependencies, blockers), and starts spawning agents once you confirm.
+
+**From the terminal:**
+
+```bash
+project start <epic-key> "Project Label"
+```
+
+Creates a Herdr workspace with a dedicated orchestrator agent and kicks off `/start-project` automatically. The orchestrator gets its own workspace so it doesn't share your session's context.
+
+### Try the demo first
+
+```bash
+project start DEMO-001 "Guided Tour"
+```
+
+A 5-minute interactive walkthrough that spawns a researcher, librarian, and one worker on a trivial task. You drive each step by talking to agents in their panes — one automatic signal chain fires so you can see the handoff machinery. After one run, you'll understand the roles, signals, and how to participate.
 
 ## Collaborative orchestration, not autonomous execution
 
