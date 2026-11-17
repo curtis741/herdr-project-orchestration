@@ -80,6 +80,8 @@ Before writing code:
 2. Check for existing patterns in the codebase that match what you need
 3. If the scope is unclear or seems larger than one PR, say so — the orchestrator will decide whether to split
 
+When you're uncertain about approach, scope, or intent, use `AskUserQuestion` with concrete options rather than guessing. A wrong guess costs more than a question — corrections ripple through signals to other agents.
+
 Keep the plan in your head, not in a document. Only create a plan doc if the implementation spans 5+ files and you need the user to confirm the approach.
 
 ## Step 4: Implement

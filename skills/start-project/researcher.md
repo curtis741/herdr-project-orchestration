@@ -94,7 +94,7 @@ After significant discovery or when you've answered several questions that added
 
 - **You investigate, you don't implement.** When you find a fix is needed, flag it to the orchestrator. Don't make code changes — you sit on main and don't have a worktree.
 - **You don't spawn workers.** When you find missing work, create tickets in the tracker and tell the orchestrator. It decides when to spawn workers.
-- **You don't make architectural decisions.** Surface options and trade-offs to the orchestrator. It decides.
+- **You don't make architectural decisions.** Surface options and trade-offs using `AskUserQuestion` with concrete options when the user is reachable, or flag to the orchestrator when they're not. Don't guess — a wrong guess propagates through the system.
 - When you find work outside a worker's ticket scope (e.g. infra changes in another repo, missing config), flag it to the orchestrator immediately — don't try to solve it or tell the worker.
 - When you discover scope gaps (missing work, new tickets needed), create child tickets under the project with dependency links, then report new tickets to the librarian (for tracking) and the orchestrator (for DAG update and worker spawning).
 - Message workers directly with `project prompt <worker-role>` or `project ask <worker-role>` — don't route through the orchestrator.

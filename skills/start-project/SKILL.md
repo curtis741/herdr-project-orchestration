@@ -59,7 +59,7 @@ Repo mapping:
 
 **Spikes / research tickets:** If the project already has populated child tickets (descriptions, dependency links), skip the research phase — the spike is done. Exclude spike tickets from the DAG and note them as already resolved in the plan. If the project has open discovery questions (listed in the description or spike comments), spawn a lightweight research agent alongside wave 1. The research agent closes its own spike ticket when its work is done — the orchestrator doesn't manage that transition.
 
-Wait for the user to confirm or adjust before proceeding.
+Use `AskUserQuestion` to confirm the plan — present the key decisions (wave grouping, dependency order, repo mapping) as concrete options the user can approve or redirect. Don't present a wall of text and ask "looks good?" — structure the decision points.
 
 ## Step 2: Determine repo mapping
 

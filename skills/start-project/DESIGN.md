@@ -31,7 +31,8 @@ Project Workspace (one Herdr workspace, all roles as tabs)
 Workers ──STARTING/COMPLETE──> Librarian (ticket transitions + operational notes)
 Workers ──DONE──> Librarian (post-merge verification only)
 Librarian ──COMPLETE relay──> Orchestrator (compact: PR#, ticket, test brief)
-Librarian ──DONE relay──> Orchestrator (post-merge verification complete)
+Librarian ──UNBLOCKED──> Orchestrator (dependency cleared, ready for worker)
+Librarian ──PROJECT_COMPLETE──> Orchestrator (last ticket done)
 Librarian ──WATCH──> Watcher (PR# + worker role to report to)
 Watcher ──CI failures──> Worker (direct, structured failure reports)
 Watcher ──CI GREEN──> Librarian (PR passed CI)
@@ -271,7 +272,8 @@ If defer:
 
 ## Constraints
 
-- **Signal economy** — every signal burns tokens in both sender and receiver. Route lifecycle events through one agent (the librarian) rather than fanning out. The orchestrator gets compact relays, not raw detail.
+- **Surface uncertainty, don't resolve it** — agents have a baseline drive to produce an answer rather than ask. In a single-agent session that's fine; in this system a wrong guess propagates through signals and burns tokens in every agent that receives it. When an agent is uncertain about scope, intent, or approach, it must use `AskUserQuestion` with concrete options rather than guessing. The structured dialog forces the agent to articulate the actual choices (which is itself useful reasoning) and gives the user a low-friction way to steer. A question is cheaper than a correction rippling through the system.
+- **Signal economy** — every signal burns tokens in both sender and receiver. Route lifecycle events through one agent (the librarian) rather than fanning out. The orchestrator gets compact relays, not raw detail. The librarian only signals the orchestrator when it needs to act: `UNBLOCKED` (spawn workers) or `PROJECT_COMPLETE` (wrap up). Routine `DONE` signals are stored without relay.
 - Max 3 concurrent workers
 - Workers don't spawn sub-agents — escalate to orchestrator
 - Librarian, watcher, and researcher are long-lived — all stay up for the life of the project. Librarian and researcher are on-demand (idle is their correct steady state). The researcher can be cleanly restarted when context degrades — research.md carries forward. The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
