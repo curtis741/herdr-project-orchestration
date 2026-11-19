@@ -274,7 +274,13 @@ If defer:
 - Distill files live in the project dir, not the worktree — they don't pollute `git status`, and the successor always knows where to look.
 - The successor owns the predecessor's shutdown. Either it has questions or it doesn't; once it's ramped, it retires the old pane itself. No extra signal to the orchestrator — `SHUTDOWN` is logged only. Re-registering keeps the old session ID in `previous_sessions`.
 - Workers commit WIP before distilling so no code is lost. The fresh session picks up from the committed state.
-- **Distill beats compaction.** Auto-compaction is lossy and uncontrolled — one worker lost the fact that it was in a project at all and fell back to a generic subagent instead of `project research`. Agents should request a distill when they sense compaction approaching.
+- **Distill beats compaction.** Auto-compaction is lossy and uncontrolled — one worker lost the fact that it was in a project at all and fell back to a generic subagent instead of `project research`. A distill is written by the agent for its role; a compaction summary is generic.
+
+**Context guard (enforcement):** agents can't reliably sense their own context size, so a global Claude Code hook (`scripts/context-guard.sh`, installed by `setup.sh`) does it for them. It's a no-op unless the session's pane is a registered, non-stopped agent in a project state file.
+- **Stop hook** — after each turn, reads the transcript's last assistant `usage` (input + cache tokens) as the current context size. Past `PROJECT_DISTILL_TOKENS` (default 150k, absolute rather than a percent of the window, because quality degrades with size regardless of window), it injects a one-time nudge telling the agent to request DISTILL. The orchestrator is told to write `orchestrator.distill.md` and ask the user for a fresh session instead.
+- **SessionStart `compact` hook** — the backstop. If compaction happens anyway, it re-injects identity (role, project, project dir, `project` CLI), which instructions to re-read, and a push to DISTILL.
+- Auto-compaction stays enabled as the safety net. Blocking it with a PreCompact hook was rejected: a blocked compaction doesn't restart anything, and if context is already full the request just fails.
+- The transcript usage format isn't a documented contract; if it changes, the Stop hook silently stops nudging (it never fails the session).
 
 **When agents should request distill:**
 - Context is noticeably full (responses getting slower, tool output accumulating)

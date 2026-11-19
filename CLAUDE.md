@@ -14,7 +14,8 @@ GUIDE.md                   # New user guide (symlinked to ~/.claude/skills/PROJE
 CHANGELOG.md               # User-facing changes per version (fed to running orchestrators on upgrade)
 scripts/
   project.sh               # The project CLI (symlinked to ~/.local/bin/project)
-  setup.sh                  # Build hook: creates symlinks for CLI + skills
+  setup.sh                  # Build hook: creates symlinks for CLI + skills, installs context guard hooks
+  context-guard.sh          # Global Claude Code hook: nudges project agents to DISTILL before compaction
 skills/
   start-project/SKILL.md    # Orchestrator skill
   start-project/DESIGN.md   # System design (role boundaries, constraints, known gaps)

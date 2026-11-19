@@ -24,6 +24,30 @@ for skill in start-project project-worker guided-tour; do
   echo "✓ Linked: ~/.claude/skills/$skill"
 done
 
+# Context guard hook — global Claude Code hooks that nudge project agents to
+# DISTILL before auto-compaction, and re-orient them if compaction happens.
+# No-op for any session that isn't a registered project agent.
+ln -sf "$PLUGIN_DIR/scripts/context-guard.sh" "$HOME/.local/bin/project-context-guard"
+CLAUDE_SETTINGS="$HOME/.claude/settings.json"
+GUARD_CMD="$HOME/.local/bin/project-context-guard"
+if command -v jq &>/dev/null; then
+  [[ -f "$CLAUDE_SETTINGS" ]] || echo '{}' > "$CLAUDE_SETTINGS"
+  if jq -e --arg c "$GUARD_CMD" '[.hooks // {} | .[][]?.hooks[]?.command] | index($c)' "$CLAUDE_SETTINGS" >/dev/null 2>&1; then
+    echo "✓ Context guard hooks already installed"
+  else
+    cp "$CLAUDE_SETTINGS" "$CLAUDE_SETTINGS.bak-project-orchestration"
+    tmp="$CLAUDE_SETTINGS.tmp.$$"
+    jq --arg c "$GUARD_CMD" '
+      .hooks = (.hooks // {})
+      | .hooks.Stop = ((.hooks.Stop // []) + [{hooks: [{type: "command", command: $c}]}])
+      | .hooks.SessionStart = ((.hooks.SessionStart // []) + [{matcher: "compact", hooks: [{type: "command", command: $c}]}])
+    ' "$CLAUDE_SETTINGS" > "$tmp" && mv "$tmp" "$CLAUDE_SETTINGS"
+    echo "✓ Installed context guard hooks in $CLAUDE_SETTINGS (backup: settings.json.bak-project-orchestration)"
+  fi
+else
+  echo "⚠ jq not found — skipped context guard hook install"
+fi
+
 # Guide symlink
 ln -sf "$PLUGIN_DIR/GUIDE.md" "$HOME/.claude/skills/PROJECT_GUIDE.md"
 echo "✓ Linked: ~/.claude/skills/PROJECT_GUIDE.md"

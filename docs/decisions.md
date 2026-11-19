@@ -77,6 +77,7 @@ Findings from real epic runs that have been worked into skills or DESIGN.md.
 - **Project dir as shared working area** (real project run) → `project dir` command + all role files + `DESIGN.md` § Project working dir: test plans, context files, cross-agent learnings, test scripts, distill files — anything uncommitted that lives for the project's lifetime. Role-prefixed filenames.
 - **Two researcher use cases: ask vs. punt** (real project run) → `project punt` command + `project-worker/SKILL.md` § Asking for help + `researcher.md` Phase 2 + `DESIGN.md`: a punted problem is owned by the researcher; findings no longer bounce back through the worker.
 - **`project research` rejected an idle researcher as "busy (done)"** (real project run) → `scripts/project.sh`: only `working` counts as busy.
+- **Intercept compaction** (maintainer follow-up) → `scripts/context-guard.sh` + `setup.sh` + `DESIGN.md` § Knowledge pressure and distill: global Stop hook nudges DISTILL past a token threshold; SessionStart `compact` hook re-orients if compaction happens anyway. No-op outside registered project agents.
 
 ## Feedback — New
 
