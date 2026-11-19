@@ -10,7 +10,7 @@
 - **Release detection** — orchestrator or a hook detects a release containing epic work and tells the librarian to transition tickets from Acceptance Test to Done. Today this is manual.
 - **Tester generalization** — extend the tester pattern beyond API parity to data migration verification, background job output checks, and other post-deploy validation.
 
-- **Tune the context guard threshold** — 150k is a starting guess. Watch real runs: do agents distill at the right time, too early (1M-context agents), or still get compacted? Consider per-role thresholds (the librarian's accumulated summaries are signal, not noise).
+- **Tune the context guard threshold** — 100k of growth is a starting guess (the first absolute 150k threshold caused a distill ping-pong). Watch real runs: do agents distill at the right time, too early (1M-context agents), or still get compacted? Consider per-role thresholds (the librarian's accumulated summaries are signal, not noise).
 - **Upstream: herdr re-injects tab env on resume** — sessions resumed after a reboot lose `--env HERDR_PROJECT`. The CLI now recovers the project from the state file via `HERDR_PANE_ID`/`HERDR_WORKSPACE_ID`, but herdr persisting per-tab env would fix it for any plugin.
 
 ## Medium term

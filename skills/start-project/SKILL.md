@@ -362,7 +362,7 @@ When the librarian relays a `DONE` signal (post-merge verification complete), no
 
 Any agent can send `DISTILL — <reason>` when its context is getting noisy and output quality is degrading. When you receive one, decide:
 
-**Defer** — if the agent is close to finishing (e.g. worker has opened a PR and is just waiting on CI), tell it to finish first:
+**Defer** — if the agent was rotated in the last ~15 minutes (a successor asking to distill again means its boot work is the problem, not noise — tell it to stop re-verifying and carry on), or if it is close to finishing (e.g. worker has opened a PR and is just waiting on CI), tell it to finish first:
 
 ```bash
 project prompt <role> "DISTILL_DEFER — finish your current step, then re-request if needed"
@@ -388,7 +388,7 @@ When you receive `DISTILL_READY`, spawn the successor in a **new tab**, leaving 
 
    You are taking over as <role> after a distill. Before waiting for anything:
    1. Run: project register <role>
-   2. Read $(project dir)/<role>.distill.md — your predecessor's state.
+   2. Read $(project dir)/<role>.distill.md — your predecessor's state. Trust it; don't re-verify everything against the tracker or GitHub (that refills your context immediately). Check a specific item only when you act on it.
    3. Your predecessor is still live in pane $old_pane. If anything in the distill file is unclear, ask it directly: herdr agent prompt $old_pane '<question>' --wait, then herdr agent read $old_pane.
    4. When you have no more questions (or none at all), run: project retire $old_pane
    5. Continue the work. Your original assignment:

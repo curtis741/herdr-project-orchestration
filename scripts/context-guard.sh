@@ -5,15 +5,17 @@
 # Installed globally (see setup.sh) but a no-op unless the session is a
 # registered agent in a project. Handles two events:
 #
-#   Stop                    After each turn, estimate context size from the
-#                           transcript. Past the threshold, nudge the agent once
-#                           to request DISTILL.
+#   Stop                    After each turn, measure how much the context has
+#                           grown since the session's first turn. Past the
+#                           threshold, nudge the agent once to request DISTILL.
 #   SessionStart (compact)  Compaction happened anyway — remind the agent who it
 #                           is, which instructions to re-read, and to DISTILL.
 #
-# Threshold: PROJECT_DISTILL_TOKENS (default 150000). Absolute, not a percent of
-# the window — output quality degrades with context size regardless of how big
-# the window is.
+# Threshold: PROJECT_DISTILL_TOKENS (default 100000) of GROWTH above the
+# session's first-turn baseline. The baseline (system prompt, tool and MCP
+# definitions, CLAUDE.md, memory) can be 80k+ before the agent does anything and
+# is identical in a fresh successor, so counting it would make a distilled agent
+# hit the threshold again almost immediately.
 #
 # Never fails the session: every error path exits 0 silently.
 
@@ -21,7 +23,7 @@ set -uo pipefail
 trap 'exit 0' ERR
 
 PROJECTS_DIR="$HOME/.herdr/projects"
-THRESHOLD="${PROJECT_DISTILL_TOKENS:-150000}"
+THRESHOLD="${PROJECT_DISTILL_TOKENS:-100000}"
 
 input="$(cat)"
 pane="${HERDR_PANE_ID:-}"
@@ -76,16 +78,18 @@ case "$event" in
     marker="$proj_dir/.distill-nudged/$session"
     [[ -f "$marker" ]] && exit 0
 
-    # Context size = input side of the most recent assistant turn
+    # Context size = input side of an assistant turn. Baseline = first turn,
+    # current = most recent turn.
+    usage_sum='.message.usage // empty | ((.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0))'
+    baseline=$(grep -m1 '"type":"assistant"' "$transcript" | jq "$usage_sum" 2>/dev/null)
     used=$(tail -n 200 "$transcript" \
-      | jq -s '[.[] | select(.type == "assistant") | .message.usage // empty
-               | ((.input_tokens // 0) + (.cache_creation_input_tokens // 0) + (.cache_read_input_tokens // 0))]
-               | last // 0' 2>/dev/null)
-    [[ "$used" =~ ^[0-9]+$ ]] || exit 0
-    (( used >= THRESHOLD )) || exit 0
+      | jq -s "[.[] | select(.type == \"assistant\") | $usage_sum] | last // 0" 2>/dev/null)
+    [[ "$used" =~ ^[0-9]+$ && "$baseline" =~ ^[0-9]+$ ]] || exit 0
+    grown=$(( used - baseline ))
+    (( grown >= THRESHOLD )) || exit 0
 
     mkdir -p "$proj_dir/.distill-nudged" && touch "$marker"
-    msg="CONTEXT GUARD — your context is at ~$((used / 1000))k tokens (threshold $((THRESHOLD / 1000))k). Prefer DISTILL over auto-compaction: compaction is lossy and can drop what your role needs. $distill_how"
+    msg="CONTEXT GUARD — your context has grown ~$((grown / 1000))k tokens this session (now ~$((used / 1000))k; threshold $((THRESHOLD / 1000))k of growth). Prefer DISTILL over auto-compaction: compaction is lossy and can drop what your role needs. $distill_how"
     jq -n --arg m "$msg" '{hookSpecificOutput: {hookEventName: "Stop", additionalContext: $m}}'
     ;;
 
