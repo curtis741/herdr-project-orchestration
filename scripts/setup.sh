@@ -27,6 +27,7 @@ done
 # Context guard hook — global Claude Code hooks that nudge project agents to
 # DISTILL before auto-compaction, and re-orient them if compaction happens.
 # No-op for any session that isn't a registered project agent.
+chmod +x "$PLUGIN_DIR/scripts/context-guard.sh" "$PLUGIN_DIR/scripts/project.sh"
 ln -sf "$PLUGIN_DIR/scripts/context-guard.sh" "$HOME/.local/bin/project-context-guard"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 GUARD_CMD="$HOME/.local/bin/project-context-guard"
