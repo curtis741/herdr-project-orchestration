@@ -297,9 +297,11 @@ This returns NATO phonetic names in order: alpha, bravo, charlie, etc.
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "$worker_name — <ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start "$worker_name" --kind claude --pane <pane_id> -- -n "$worker_name"
+herdr agent start "$worker_name" --kind claude --pane <pane_id> -- -n "$worker_name — <focus>"
 project assign "$worker_name" <ticket-key>
 ```
+
+`-n` sets the session name shown in the terminal title. `<focus>` is 2–4 words from the ticket summary describing what this worker is doing (e.g. `charlie — fee column backfill`), so the user can tell workers apart at a glance. Reuse the same name whenever you restart or resume this worker.
 
 The Claude session starts scoped to `<repo_path>` — it shares memory, `/resume`, and session list with the primary checkout.
 
@@ -378,7 +380,7 @@ When you receive `DISTILL_READY`, spawn the successor in a **new tab**, leaving 
 2. Create a new tab with the same label and cwd as the original, and start a fresh agent (not `--resume` — the whole point is clean context):
    ```bash
    herdr tab create --workspace <workspace-id> --cwd <same-cwd-as-original> --label "<same-label-as-original>" --env HERDR_PROJECT=<project-name> --no-focus
-   herdr agent start <role> --kind claude --pane <new_pane_id> -- -n <role>
+   herdr agent start <role> --kind claude --pane <new_pane_id> -- -n "<same session name as before>"
    ```
 3. Boot the successor with its original boot steps, plus the takeover instructions:
    ```bash
@@ -403,7 +405,7 @@ When a worker's DONE signal includes a test brief, spawn an independent tester a
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "tester-<ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start tester-<ticket-key> --kind claude --pane <pane_id> -- -n tester-<ticket-key>
+herdr agent start tester-<ticket-key> --kind claude --pane <pane_id> -- -n "tester-<ticket-key> — <focus>"
 ```
 
 The tester needs to cd into the worker's worktree to test against the worker's branch:
@@ -504,7 +506,7 @@ herdr pane close <pane_id>
 
 ```bash
 session_id=$(project session <worker-name>)
-herdr agent start <worker-name> --kind claude --pane <pane_id> -- --resume "$session_id" -n <worker-name>
+herdr agent start <worker-name> --kind claude --pane <pane_id> -- --resume "$session_id" -n "<worker-name> — <focus>"
 project register <worker-name> <pane_id>
 ```
 
@@ -563,7 +565,7 @@ From these four sources, reconstruct: which wave, which tasks done/in-progress/b
 3. **Resume agents with session IDs** — priority order: librarian first (it has accumulated knowledge), then active workers:
    ```bash
    herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "<role>" --env HERDR_PROJECT=<project-name> --no-focus
-   herdr agent start <role> --kind claude --pane <new_pane_id> -- --resume <session-id> -n <role>
+   herdr agent start <role> --kind claude --pane <new_pane_id> -- --resume <session-id> -n "<role>, or <role> — <focus> for workers"
    ```
    Each agent self-registers on boot, which updates its pane ID in the state file.
 
