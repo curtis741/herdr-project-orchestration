@@ -64,8 +64,11 @@ Two commands via the `project` CLI, which resolves roles to pane IDs from a shar
 | `CI GREEN` | Watcher → Librarian | PR passed CI |
 | `CI FAILED` | Watcher → Worker | CI failure with structured details |
 | `SCOPE` | Worker → Orchestrator | Found work outside ticket scope |
+| `RESEARCH` | Any agent → Researcher | "I need to know this" — answer comes back to the asker |
+| `PUNT` | Any agent → Researcher | "I think we have a problem" — researcher owns it and acts; no reply unless the sender's ticket is affected |
 | `DISTILL` | Any agent → Orchestrator | Context is noisy, requesting distill/restart |
-| `DISTILL_READY` | Agent → Orchestrator | Durable state written, ready for restart |
+| `DISTILL_READY` | Agent → Orchestrator | `<role>.distill.md` written to the project dir; orchestrator spawns a successor in a new tab |
+| `SHUTDOWN` | Successor → (log only) | Successor ran `project retire <old-pane>` after a distill takeover; not sent to any agent |
 
 ## Responsibility boundaries
 

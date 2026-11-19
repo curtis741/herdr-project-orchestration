@@ -183,11 +183,15 @@ Recovery priority: librarian first (accumulated knowledge is expensive to rebuil
 
 ### Researcher two-phase model with durable artifact
 
-The researcher operates in two phases: Discovery (front-loaded, high-context) maps the system end-to-end and writes findings to `~/.herdr/projects/<project>/research.md`. Ongoing (lighter, queryable) answers questions from the existing map and only investigates when the map is incomplete.
+The researcher operates in two phases: Discovery (front-loaded, high-context) maps the system end-to-end and writes findings to `$(project dir)/research.md`. Ongoing (lighter, queryable) answers questions from the existing map and only investigates when the map is incomplete.
 
 The durable artifact (research.md) serves two purposes: it lets the researcher answer questions without re-investigating, and it survives context restarts. When the researcher's context degrades, the orchestrator can restart it cleanly — the new instance loads research.md and resumes in Phase 2 without losing prior work. This is the distill/restart pattern: the artifact captures the value, the context window is disposable.
 
 Sections (Current Model, Subtask Notes, Open Questions, Rejected Hypotheses, Evidence) are designed so the researcher and workers can find what they need without reading the whole file. Rejected Hypotheses prevents re-investigation of dead ends across restarts.
+
+### Researcher requests: ask vs. punt
+
+Workers hit two different situations. "I need to know this" (`project research`) is a question — the answer comes back to the asker. "I think we have a problem here" (`project punt`) is a handoff — the researcher owns the outcome and acts (ticket, orchestrator, user), and the sender hears nothing unless their ticket is affected. Without the split, a punted problem came back to the worker as a findings dump, and the worker relayed it to the user — two agents' context burned on something neither needed to hold.
 
 ### Release detection (not yet implemented)
 
@@ -228,9 +232,13 @@ Workers are short-lived — most finish before an update matters, and recycled/r
 
 This follows signal economy: fanning the same CHANGELOG to N agents burns tokens in every context for information most can't act on mid-task. One routing point (the orchestrator) is enough.
 
+### Project working dir
+
+`~/.herdr/projects/<project>/` (printed by `project dir`) is the shared, uncommitted working directory for every agent in the project: research.md, feedback.md, distill files, test plans, context notes, cross-agent learnings, reusable test scripts. It lives exactly as long as the project. This replaces session scratchpads (which vanish between sessions and are invisible to other agents) and worktree-local files (which pollute git and die with the worktree). Files are role-prefixed to avoid collisions. Durable shared files are also a token-quality tool: pass a path instead of pasting content through signals.
+
 ### State recovery via project state file
 
-The `project` CLI maintains a state file at `~/.herdr/projects/<project-name>.json` mapping role → pane ID + session ID. Agents self-register via `project register <role>` during boot (auto-detects pane ID and session ID). The state file is never deleted — `project stop` marks agents as stopped but preserves all data. The project name is injected as `HERDR_PROJECT` via `herdr tab create --env`.
+The `project` CLI maintains a state file at `~/.herdr/projects/<project-name>.json` mapping role → pane ID + session ID. Agents self-register via `project register <role>` during boot (auto-detects pane ID and session ID). The state file is never deleted — `project stop` marks agents as stopped but preserves all data. The project name is injected as `HERDR_PROJECT` via `herdr tab create --env`. Sessions resumed after a reboot lose that env var, so when it's unset the CLI falls back to the state file whose agents claim `$HERDR_PANE_ID` (or whose `workspace_id` matches `$HERDR_WORKSPACE_ID`).
 
 On restart, `project roster` and `project status` show all agents (including stopped ones) and their current state. The orchestrator asks the librarian for ticket/PR status rather than querying GitHub.
 
@@ -248,9 +256,12 @@ Agent → orchestrator: DISTILL — <reason>
 Orchestrator decides: approve or defer
 If approve:
   Orchestrator → agent: DISTILL_ACK — write state, signal DISTILL_READY
-  Agent commits WIP (if applicable), writes DISTILL.md with current state
+  Agent commits WIP (if applicable), writes $(project dir)/<role>.distill.md
   Agent → orchestrator: DISTILL_READY
-  Orchestrator stops agent, restarts fresh (not --resume), sends original assignment + distill state
+  Orchestrator spawns successor in a NEW tab (fresh, not --resume), boot prompt names old pane
+  Successor registers under the same role (signals now route to it), reads the distill file
+  Successor optionally questions the old agent by pane ID
+  Successor runs `project retire <old-pane>` → old tab closed, SHUTDOWN logged
 If defer:
   Orchestrator → agent: DISTILL_DEFER — finish current step first
 ```
@@ -258,8 +269,12 @@ If defer:
 **Key design choices:**
 - DISTILL goes directly to the orchestrator, not through the librarian. It's an operational signal about agent health, not a lifecycle event. The librarian doesn't need to know or act on it.
 - Restart is fresh, not `--resume`. The point is clean context — `--resume` would carry the noise forward.
-- The agent writes its own state summary. It knows what matters from its context; the orchestrator just shuttles it to the fresh session.
+- The agent writes its own state summary. It knows what matters from its context.
+- The orchestrator never reads the distill file — it passes the path. The successor reads it directly, so the state never burns orchestrator tokens.
+- Distill files live in the project dir, not the worktree — they don't pollute `git status`, and the successor always knows where to look.
+- The successor owns the predecessor's shutdown. Either it has questions or it doesn't; once it's ramped, it retires the old pane itself. No extra signal to the orchestrator — `SHUTDOWN` is logged only. Re-registering keeps the old session ID in `previous_sessions`.
 - Workers commit WIP before distilling so no code is lost. The fresh session picks up from the committed state.
+- **Distill beats compaction.** Auto-compaction is lossy and uncontrolled — one worker lost the fact that it was in a project at all and fell back to a generic subagent instead of `project research`. Agents should request a distill when they sense compaction approaching.
 
 **When agents should request distill:**
 - Context is noticeably full (responses getting slower, tool output accumulating)

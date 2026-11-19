@@ -89,9 +89,12 @@ Commands:
   status                           Show agent states for all registered roles
   info                             Print epic key and workspace ID
   research <question>               Ask a research question (async, answer comes back via prompt)
+  punt "<problem>"                 Hand a suspected problem to the researcher to own (no answer comes back)
   resolve <role>                   Print the pane ID for a role (for scripting)
   session <role>                   Print the session ID for a role
   file                             Print the path to the state file
+  dir                              Print the project working dir (shared, uncommitted scratch space)
+  retire <old-pane-id>             Close a predecessor's tab after a DISTILL takeover (new agent runs this)
   log [--tail N]                   Print the signal log (default: last 50 entries)
   log-decision <decision-type> <payload>
                                    Log an orchestrator decision (wave transition, spawn, etc.)
@@ -102,13 +105,15 @@ Commands:
   check-in [--since <timestamp>]   Developer summary: what happened, what needs you
   observe                          Read-only snapshot: agents, signals, blockers, worktrees
 
-Project name is auto-detected from $HERDR_PROJECT.
+Project name is auto-detected from $HERDR_PROJECT, falling back to the state
+file that claims this pane/workspace (e.g. sessions resumed after a reboot).
 Override with --project <name>.
 EOF
   exit 1
 }
 
-# Resolve project name: explicit flag > env var
+# Resolve project name: explicit flag > env var > state-file lookup by pane/workspace
+# (the lookup runs once at startup, see below the global flag parsing).
 resolve_project() {
   local name="${HERDR_PROJECT:-}"
   if [[ -z "$name" ]]; then
@@ -116,6 +121,43 @@ resolve_project() {
     exit 1
   fi
   echo "$name"
+}
+
+# Find the single project whose state file claims this pane (any agent) or,
+# failing that, this workspace. Prints nothing if zero or multiple match.
+_project_from_state_files() {
+  local pane="${HERDR_PANE_ID:-}" ws="${HERDR_WORKSPACE_ID:-}"
+  [[ -z "$pane" && -z "$ws" ]] && return 0
+  local f matches=()
+  if [[ -n "$pane" ]]; then
+    for f in "$PROJECTS_DIR"/*.json; do
+      [[ -f "$f" ]] || continue
+      jq -e --arg p "$pane" '[.agents[]?.pane_id] | index($p) != null' "$f" >/dev/null 2>&1 \
+        && matches+=("$(basename "$f" .json)")
+    done
+  fi
+  if [[ ${#matches[@]} -eq 0 && -n "$ws" ]]; then
+    for f in "$PROJECTS_DIR"/*.json; do
+      [[ -f "$f" ]] || continue
+      jq -e --arg w "$ws" '.workspace_id == $w' "$f" >/dev/null 2>&1 \
+        && matches+=("$(basename "$f" .json)")
+    done
+  fi
+  if [[ ${#matches[@]} -eq 1 ]]; then
+    echo "note: HERDR_PROJECT unset — resolved '${matches[0]}' from state file (export HERDR_PROJECT=${matches[0]} to silence)" >&2
+    echo "${matches[0]}"
+  fi
+}
+
+# Project working directory: shared scratch space for all agents, lives for the
+# project's lifetime, never committed. Feedback, research, distill files, test
+# plans, scripts, and cross-agent notes all go here.
+project_dir() {
+  local name
+  name="$(resolve_project)" || exit 1
+  local d="$PROJECTS_DIR/$name"
+  mkdir -p "$d"
+  echo "$d"
 }
 
 state_file() {
@@ -234,7 +276,7 @@ cmd_start() {
 
   # Wait for the pane shell to be ready, then start the agent
   local attempts=0
-  while ! herdr agent start orchestrator --kind claude --pane "$pane_id" 2>/dev/null | jq -e '.result' >/dev/null 2>&1; do
+  while ! herdr agent start orchestrator --kind claude --pane "$pane_id" -- -n orchestrator 2>/dev/null | jq -e '.result' >/dev/null 2>&1; do
     attempts=$((attempts + 1))
     if [[ $attempts -ge 10 ]]; then
       echo "error: pane $pane_id not ready after 5s — failed to start orchestrator agent" >&2
@@ -277,9 +319,16 @@ cmd_register() {
       | jq -r '.result.agent.agent_session.value // empty' 2>/dev/null || true)
   fi
 
+  # Re-registering a role (e.g. after DISTILL takeover) keeps the prior session ID
+  # in previous_sessions so it can still be resumed later.
   local tmp="${f}.tmp.$$"
   jq --arg role "$role" --arg pane "$pane_id" --arg sid "$session_id" \
-    '.agents[$role] = (.agents[$role] // {}) + {pane_id: $pane, session_id: $sid, registered_at: (now | todate)} | del(.agents[$role].stopped) | del(.agents[$role].stopped_at)' \
+    '(.agents[$role] // {}) as $old
+     | .agents[$role] = $old + {pane_id: $pane, session_id: $sid, registered_at: (now | todate)}
+     | if ($old.session_id // "") != "" and $old.session_id != $sid
+       then .agents[$role].previous_sessions = (($old.previous_sessions // []) | if index($old.session_id) then . else . + [$old.session_id] end)
+       else . end
+     | del(.agents[$role].stopped) | del(.agents[$role].stopped_at)' \
     "$f" > "$tmp" && mv "$tmp" "$f"
 
   # Signal the orchestrator that this agent is ready (unless we ARE the orchestrator)
@@ -623,22 +672,12 @@ cmd_info() {
   jq '{project, workspace_id, agent_count: (.agents | length)}' "$f"
 }
 
-cmd_research() {
-  local question="$*"
-  if [[ -z "$question" ]]; then
-    echo "usage: project research <question>" >&2
-    exit 1
-  fi
-
-  local f
-  f="$(ensure_state)"
-
-  local my_role
-  my_role="$(resolve_caller "$f")"
-
-  # Route: researcher if registered and not stopped, otherwise orchestrator
-  local target="researcher"
-  local target_pane
+# Route a research request: researcher if registered and not stopped, otherwise
+# orchestrator. Prints "<target> <pane>"; exits if neither is reachable or the
+# target is mid-turn.
+_research_target() {
+  local f="$1"
+  local target="researcher" target_pane
   target_pane="$(read_pane "$f" "researcher")"
   local researcher_stopped
   researcher_stopped=$(jq -r '.agents.researcher.stopped // false' "$f")
@@ -646,33 +685,69 @@ cmd_research() {
     target="orchestrator"
     target_pane="$(read_pane "$f" "orchestrator")"
   fi
-
   if [[ -z "$target_pane" ]]; then
     echo "error: neither researcher nor orchestrator is registered" >&2
     exit 1
   fi
-
-  # Check if the target is busy
+  # Only "working" is busy — "done" means the agent finished its turn and is
+  # waiting for input, same as idle.
   local status
   status=$(herdr agent get "$target_pane" 2>/dev/null \
     | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unknown")
-  if [[ "$status" != "idle" && "$status" != "unknown" ]]; then
+  if [[ "$status" == "working" ]]; then
     echo "error: $target is busy ($status) — try again later" >&2
     exit 1
   fi
+  echo "$target $target_pane"
+}
 
-  local prefix=""
+# "I need to know this" — the answer comes back to the caller.
+cmd_research() {
+  local question="$*"
+  if [[ -z "$question" ]]; then
+    echo "usage: project research <question>" >&2
+    exit 1
+  fi
+  local f
+  f="$(ensure_state)"
+  local my_role
+  my_role="$(resolve_caller "$f")"
+  local routed target target_pane
+  routed="$(_research_target "$f")" || exit 1
+  read -r target target_pane <<<"$routed"
+
+  local prefix="" callback=""
   if [[ -n "$my_role" ]]; then
     prefix="FROM($my_role): "
-  fi
-
-  local callback=""
-  if [[ -n "$my_role" ]]; then
     callback=" Reply with: project prompt $my_role '<your answer>'"
   fi
 
-  herdr agent prompt "$target_pane" "${prefix}RESEARCH — $question${callback}"
+  herdr agent prompt "$target_pane" "${prefix}RESEARCH — $question${callback}" >/dev/null
+  log_signal "${my_role:-unknown}" "$target" "RESEARCH" "$question"
   echo "sent to $target${my_role:+ (reply will come back to $my_role)}"
+}
+
+# "I think we have a problem here" — hand it off; the researcher owns the
+# outcome and acts on it instead of reporting back to the caller.
+cmd_punt() {
+  local problem="$*"
+  if [[ -z "$problem" ]]; then
+    echo "usage: project punt \"<problem>\"" >&2
+    exit 1
+  fi
+  local f
+  f="$(ensure_state)"
+  local my_role
+  my_role="$(resolve_caller "$f")"
+  local routed target target_pane
+  routed="$(_research_target "$f")" || exit 1
+  read -r target target_pane <<<"$routed"
+
+  local from="${my_role:-an agent}"
+  herdr agent prompt "$target_pane" "FROM($from): PUNT — $problem
+You own this — $from is not waiting on an answer. Investigate, decide what should happen, and act (create a ticket, flag the orchestrator, or ask the user). Only message $from if the outcome changes their current ticket, and then in one line." >/dev/null
+  log_signal "$from" "$target" "PUNT" "$problem"
+  echo "punted to $target — it owns this now; you'll only hear back if it affects your ticket"
 }
 
 cmd_log() {
@@ -714,9 +789,7 @@ cmd_log_decision() {
 }
 
 feedback_file() {
-  local proj_dir="$PROJECTS_DIR/$(resolve_project)"
-  mkdir -p "$proj_dir"
-  echo "$proj_dir/feedback.md"
+  echo "$(project_dir)/feedback.md"
 }
 
 classify_role() {
@@ -895,7 +968,7 @@ cmd_recover() {
     echo "    1. project register orchestrator"
     echo "    2. For each resumable agent, create a new tab and resume:"
     echo "       herdr tab create --workspace <ws> --cwd \"\$PWD\" --label \"<role>\" --env HERDR_PROJECT=$name --no-focus"
-    echo "       herdr agent start <role> --kind claude --pane <new-pane> -- --resume <session-id>"
+    echo "       herdr agent start <role> --kind claude --pane <new-pane> -- --resume <session-id> -n <role>"
     echo "    3. Ask the librarian for ticket status once it's back"
   else
     echo "  All active agents are reachable. No recovery needed."
@@ -1337,6 +1410,45 @@ cmd_file() {
   state_file
 }
 
+cmd_dir() {
+  project_dir
+}
+
+# Shut down a predecessor agent after a DISTILL takeover. Run by the NEW agent
+# once it has registered and finished ramping up (asked the old pane anything it
+# needed). Closes the old agent's tab; its session ID is already preserved in
+# previous_sessions by register.
+cmd_retire() {
+  local old_pane="${1:-}"
+  if [[ -z "$old_pane" ]]; then
+    echo "usage: project retire <old-pane-id>" >&2
+    exit 1
+  fi
+  if [[ "$old_pane" == "${HERDR_PANE_ID:-}" ]]; then
+    echo "error: refusing to retire your own pane" >&2
+    exit 1
+  fi
+  local f
+  f="$(ensure_state)"
+  local owner
+  owner=$(jq -r --arg p "$old_pane" '.agents | to_entries[] | select(.value.pane_id == $p) | .key' "$f")
+  if [[ -n "$owner" ]]; then
+    echo "error: $old_pane is still registered to '$owner' — register the new agent first" >&2
+    exit 1
+  fi
+  local tab
+  tab=$(herdr pane get "$old_pane" 2>/dev/null | jq -r '.result.pane.tab_id // empty' 2>/dev/null || true)
+  if [[ -z "$tab" ]]; then
+    echo "pane $old_pane not found — already closed"
+    return 0
+  fi
+  herdr tab close "$tab" >/dev/null
+  local caller
+  caller="$(resolve_caller "$f")"
+  log_signal "${caller:-unknown}" "-" "SHUTDOWN" "retired predecessor pane $old_pane"
+  echo "retired: $old_pane (tab $tab closed)"
+}
+
 cmd_cleanup() {
   local dry_run=false
   local repo_path=""
@@ -1432,6 +1544,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Sessions resumed after a reboot come back without the --env flags their tab
+# was created with, but HERDR_PANE_ID/HERDR_WORKSPACE_ID are still set — recover
+# the project name from the state file that claims this pane or workspace.
+if [[ -z "${HERDR_PROJECT:-}" ]]; then
+  _recovered="$(_project_from_state_files)"
+  [[ -n "$_recovered" ]] && export HERDR_PROJECT="$_recovered"
+fi
+
 cmd="${1:-}"
 shift || true
 
@@ -1449,9 +1569,12 @@ case "$cmd" in
   status)     cmd_status ;;
   info)       cmd_info ;;
   research)   cmd_research "$@" ;;
+  punt)       cmd_punt "$@" ;;
   resolve)    cmd_resolve "$@" ;;
   session)    cmd_session "$@" ;;
   file)       cmd_file ;;
+  dir)        cmd_dir ;;
+  retire)     cmd_retire "$@" ;;
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;
   feedback)   cmd_feedback "$@" ;;

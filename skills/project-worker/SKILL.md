@@ -13,6 +13,7 @@ Two commands for agent communication:
 
 - **`project prompt <role> <message>`** — fire a signal, don't need the answer (STARTING, COMPLETE, DONE, SCOPE, BLOCKED, DISTILL)
 - **`project ask <role> <question>`** — ask a question, get the reply printed to stdout (librarian queries, dependency lookups)
+- **`project research` / `project punt`** — researcher requests; see § Asking for help
 
 Your boot prompt tells you your role name (e.g. `alpha`, `bravo`). Other roles you can always reach: `orchestrator`, `librarian`, `researcher`. The orchestrator's assignment tells you about other workers when relevant.
 
@@ -208,7 +209,8 @@ The orchestrator may prompt you with the next ticket if you're part of a sequent
 Use `project prompt <role> <message>` to message any agent directly — don't just print into your pane and wait to be polled.
 
 - **Technical question about another worker's code:** `project ask librarian "..."` (use `ask` to get the reply in your context)
-- **Domain or research question** (data schemas, external APIs, protocol mechanics): `project research "..."` — async, non-blocking. The answer comes back as a prompt to you when it's ready. Keep working on what you can in the meantime.
+- **"I need to know this"** — a domain question you need answered to continue (data schemas, external APIs, protocol mechanics): `project research "..."` — async, non-blocking. The answer comes back as a prompt to you when it's ready. Keep working on what you can in the meantime.
+- **"I think we have a problem here"** — something looks wrong or missing but isn't yours to solve (a gap in another system, a missing upstream dependency, a suspected bug outside your ticket): `project punt "<problem + what you saw>"`. The researcher owns it from there — it investigates and acts (ticket, orchestrator, user). Nothing comes back to you unless it changes your ticket. Don't relay its findings to the user yourself.
 - **Blocked on a decision:** `project prompt orchestrator "BLOCKED — <reason>"` — it escalates to the user.
 - **CI is failing:** The watcher monitors your PRs and reports CI failures to you directly. Fix the issue, push, and the watcher will recheck. If the watcher hasn't reported a failure but you notice one, fix and push — the watcher will pick up the new status.
 - **Related work you discover:** Use judgment based on PR blast radius. A small fix that unblocks your ticket (adding a gem, fixing a broken helper) — just do it, mention it in the PR. A separate unit of work that would double the diff (moving controllers, refactoring a shared service) — `project prompt orchestrator "SCOPE — <explanation>"` and let it route the work to a follow-up ticket or another worker.
@@ -236,16 +238,24 @@ The orchestrator will either approve (you write your state and get restarted wit
 **If approved (you receive `DISTILL_ACK`):**
 
 1. Commit any WIP code with a `[WIP]` prefix
-2. Write `DISTILL.md` in your worktree root with:
+2. Write `$(project dir)/<your-role>.distill.md` (not in your worktree) with:
    - What's done (commits made, files changed)
    - What's left (remaining steps)
    - Current approach and key decisions
    - Anything the librarian doesn't know (local context, debugging findings)
-3. Signal: `project prompt orchestrator "DISTILL_READY — state written to DISTILL.md"`
+3. Signal: `project prompt orchestrator "DISTILL_READY — state written to <your-role>.distill.md"`
 
-You'll be restarted with clean context and your original assignment plus the distill state.
+A fresh successor takes over in a new tab with your original assignment. It reads your distill file and may ask you questions before shutting you down — answer them, then stop working.
+
+**If you're the successor:** your boot prompt names your predecessor's pane. Register first, read the distill file, ask the predecessor anything that's unclear, then run `project retire <old-pane>` and carry on.
+
+**Prefer distill over compaction.** If you notice your context is close to auto-compacting, request a distill *before* it happens. Compaction is lossy and uncontrolled — it can drop the fact that you're in a project at all. A distill keeps what matters. If you find your context *was* compacted and you're unsure of your situation, `project roster` tells you whether you're in a project — if so, re-read this skill before doing anything else (e.g. use `project research`, not a generic subagent).
 
 **Don't request distill** if you're one or two steps from finishing — push through instead.
+
+## Project working dir
+
+`project dir` prints the project's shared working directory — scratch space for everything that isn't committed and only lives as long as the project: test plans, context notes, cross-agent learnings, reusable test scripts, comparison outputs. Use it instead of session scratchpads (which vanish) or your worktree (which pollutes git). Prefix files you create with your role (`<role>-parity-check.sh`) to avoid collisions; `ls $(project dir)` before writing something another agent may already have.
 
 ## Worktree escape (user-initiated only)
 

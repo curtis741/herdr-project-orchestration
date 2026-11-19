@@ -133,7 +133,7 @@ herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --e
 Read the pane ID from the response. Start a claude agent:
 
 ```bash
-herdr agent start librarian --kind claude --pane <pane_id>
+herdr agent start librarian --kind claude --pane <pane_id> -- -n librarian
 ```
 
 Boot the librarian with a minimal identity prompt. `project register` writes the state file and signals READY to you automatically:
@@ -170,7 +170,7 @@ The watcher monitors CI on all worker PRs and reports failures directly to worke
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "watcher" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start watcher --kind claude --pane <pane_id>
+herdr agent start watcher --kind claude --pane <pane_id> -- -n watcher
 ```
 
 Boot the watcher:
@@ -202,7 +202,7 @@ If the project has open discovery questions (noted in the description, spike com
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "researcher" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start researcher --kind claude --pane <pane_id>
+herdr agent start researcher --kind claude --pane <pane_id> -- -n researcher
 ```
 
 Boot the researcher with a minimal identity prompt:
@@ -257,7 +257,7 @@ When the researcher's context is degraded (slow responses, losing track of findi
 ```bash
 project stop researcher
 herdr pane close <pane_id>
-herdr agent start researcher --kind claude --pane <pane_id>
+herdr agent start researcher --kind claude --pane <pane_id> -- -n researcher
 project register researcher <pane_id>
 ```
 
@@ -297,7 +297,7 @@ This returns NATO phonetic names in order: alpha, bravo, charlie, etc.
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "$worker_name — <ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start "$worker_name" --kind claude --pane <pane_id>
+herdr agent start "$worker_name" --kind claude --pane <pane_id> -- -n "$worker_name"
 project assign "$worker_name" <ticket-key>
 ```
 
@@ -369,28 +369,33 @@ project prompt <role> "DISTILL_DEFER — finish your current step, then re-reque
 **Approve** — if the agent has significant work remaining and context pressure is real:
 
 ```bash
-project prompt <role> "DISTILL_ACK — commit any WIP, write your state to DISTILL.md in your working directory, then signal DISTILL_READY"
+project prompt <role> "DISTILL_ACK — commit any WIP, write your state to $(project dir)/<role>.distill.md, then signal DISTILL_READY"
 ```
 
-When you receive `DISTILL_READY` from the agent:
+When you receive `DISTILL_READY`, spawn the successor in a **new tab**, leaving the old agent alive so the successor can question it. Don't read the distill file yourself — the successor reads it directly, so its contents never pass through your context.
 
-1. Read the agent's distill file to capture its state
-2. Stop the agent: `project stop <role>`
-3. Restart it fresh (not `--resume` — the whole point is clean context):
+1. Note the old agent's pane: `old_pane=$(project resolve <role>)`
+2. Create a new tab with the same label and cwd as the original, and start a fresh agent (not `--resume` — the whole point is clean context):
    ```bash
-   herdr agent start <role> --kind claude --pane <pane_id>
+   herdr tab create --workspace <workspace-id> --cwd <same-cwd-as-original> --label "<same-label-as-original>" --env HERDR_PROJECT=<project-name> --no-focus
+   herdr agent start <role> --kind claude --pane <new_pane_id> -- -n <role>
    ```
-4. Re-register: `project register <role> <pane_id>`
-5. Send the agent its original assignment plus the distill context:
+3. Boot the successor with its original boot steps, plus the takeover instructions:
    ```bash
-   project prompt <role> "Resuming after distill. Your original assignment:
-   <original ticket/role assignment>
+   herdr agent prompt <new_pane_id> "<original boot prompt for this role — worktree cd, etc.>
 
-   State from your previous session:
-   <contents of DISTILL.md>"
+   You are taking over as <role> after a distill. Before waiting for anything:
+   1. Run: project register <role>
+   2. Read $(project dir)/<role>.distill.md — your predecessor's state.
+   3. Your predecessor is still live in pane $old_pane. If anything in the distill file is unclear, ask it directly: herdr agent prompt $old_pane '<question>' --wait, then herdr agent read $old_pane.
+   4. When you have no more questions (or none at all), run: project retire $old_pane
+   5. Continue the work. Your original assignment:
+   <original ticket/role assignment>" --wait --timeout 60000
    ```
 
-The distill file is the agent's own summary of where it left off — what's done, what's left, current approach, decisions made. The agent writes it; you consume it and pass it to the fresh session.
+The successor owns the old agent's shutdown — it registers first (so signals route to it immediately), asks whatever it needs, then runs `project retire`, which closes the old tab. The old session ID is kept in the state file's `previous_sessions` in case it's needed later. You don't need to track the handoff further.
+
+The distill file is the agent's own summary of where it left off — what's done, what's left, current approach, decisions made. It lives in the project dir (not the worktree), so it never shows up in `git status`.
 
 ## Step 5a: Spawn tester (API / parity work only)
 
@@ -398,7 +403,7 @@ When a worker's DONE signal includes a test brief, spawn an independent tester a
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "tester-<ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start tester-<ticket-key> --kind claude --pane <pane_id>
+herdr agent start tester-<ticket-key> --kind claude --pane <pane_id> -- -n tester-<ticket-key>
 ```
 
 The tester needs to cd into the worker's worktree to test against the worker's branch:
@@ -499,7 +504,7 @@ herdr pane close <pane_id>
 
 ```bash
 session_id=$(project session <worker-name>)
-herdr agent start <worker-name> --kind claude --pane <pane_id> -- --resume "$session_id"
+herdr agent start <worker-name> --kind claude --pane <pane_id> -- --resume "$session_id" -n <worker-name>
 project register <worker-name> <pane_id>
 ```
 
@@ -558,7 +563,7 @@ From these four sources, reconstruct: which wave, which tasks done/in-progress/b
 3. **Resume agents with session IDs** — priority order: librarian first (it has accumulated knowledge), then active workers:
    ```bash
    herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "<role>" --env HERDR_PROJECT=<project-name> --no-focus
-   herdr agent start <role> --kind claude --pane <new_pane_id> -- --resume <session-id>
+   herdr agent start <role> --kind claude --pane <new_pane_id> -- --resume <session-id> -n <role>
    ```
    Each agent self-registers on boot, which updates its pane ID in the state file.
 
@@ -595,6 +600,10 @@ When the user asks for status, report this ledger. Use numbered lists per your w
 - **Merge conflict** — tell the worker to merge main into its branch (never force-push)
 - **Flaky tests** — worker can use `/fix-flaky-test` if available
 - **CI failures** — worker can use `/babysit-pr` after opening the PR
+
+## Project working dir
+
+`project dir` (`~/.herdr/projects/<project>/`) is the shared working directory for all agents — test plans, context files, cross-agent learnings, reusable test scripts, distill files, research.md, feedback.md. Anything that isn't committed and only lives for the project's lifecycle goes here, not in session scratchpads or worktrees. When briefing an agent on something larger than a few lines, write it there and send the path instead of pasting it into a prompt.
 
 ## Logging feedback
 

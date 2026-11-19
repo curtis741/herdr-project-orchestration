@@ -133,9 +133,10 @@ An agent's context fills with noise — verbose tool output, failed debugging at
 1. The distill/restart flow (DOG-203, DESIGN.md § Knowledge pressure and distill):
    - Agent sends `DISTILL — <reason>` to orchestrator
    - Orchestrator approves: `DISTILL_ACK`
-   - Agent commits WIP (workers), writes DISTILL.md with current state
+   - Agent commits WIP (workers), writes `$(project dir)/<role>.distill.md`
    - Agent sends `DISTILL_READY`
-   - Orchestrator stops agent, restarts fresh with original assignment + distill state
+   - Orchestrator spawns a fresh successor in a new tab with the original assignment + distill file path
+   - Successor registers, reads the file, optionally questions the old agent, then `project retire <old-pane>`
 2. If the agent doesn't self-detect: the orchestrator or user triggers a manual distill
 3. For the librarian specifically: its value is accumulated knowledge, so the distill artifact must capture all ingested summaries and research findings — losing those means re-ingesting from scratch
 

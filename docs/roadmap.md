@@ -10,6 +10,9 @@
 - **Release detection** — orchestrator or a hook detects a release containing epic work and tells the librarian to transition tickets from Acceptance Test to Done. Today this is manual.
 - **Tester generalization** — extend the tester pattern beyond API parity to data migration verification, background job output checks, and other post-deploy validation.
 
+- **Compaction → distill hook** — agents are told to prefer distill over auto-compaction, but they don't reliably sense when compaction is near. A Claude Code hook (on context pressure or pre-compaction) that prompts the agent to request DISTILL would make this automatic. A post-compaction session-start hook re-injecting "you're `<role>` in project `<name>`" is the cheaper fallback.
+- **Upstream: herdr re-injects tab env on resume** — sessions resumed after a reboot lose `--env HERDR_PROJECT`. The CLI now recovers the project from the state file via `HERDR_PANE_ID`/`HERDR_WORKSPACE_ID`, but herdr persisting per-tab env would fix it for any plugin.
+
 ## Medium term
 
 - **Publish to plugin gallery** — make the repo public, add the `herdr-plugin` GitHub topic. The herdr plugin index picks it up automatically (no sign-up, no review). Requires the v0.6.0 battle-test and a clean audit pass.

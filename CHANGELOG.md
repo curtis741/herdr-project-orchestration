@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+- **Project working dir** — `project dir` prints `~/.herdr/projects/<project>/`, now the shared, uncommitted working area for all agents: test plans, context files, cross-agent learnings, test scripts, distill files. Prefix files with your role. Prefer writing a file there and passing the path over pasting large content into prompts.
+- **DISTILL handoff reworked** — agents write state to `$(project dir)/<role>.distill.md` (not the worktree). On `DISTILL_READY`, the orchestrator spawns a successor in a **new tab** and passes the file path without reading it. The successor registers, reads the file, can question the old agent by pane ID, then runs `project retire <old-pane>` to close the old tab. Prior session IDs are kept in `previous_sessions`.
+- **Prefer distill over compaction** — all roles: request DISTILL before auto-compaction hits. If you were compacted, run `project roster` to confirm you're in a project and re-read your skill.
+- **Agent session names** — every `herdr agent start` passes `-- -n <role>`, so terminal titles show the role instead of a boot-prompt summary.
+- **`project punt "<problem>"`** — new: hand a suspected problem to the researcher to own. The researcher investigates and acts (ticket, orchestrator, user) instead of sending findings back. `project research` stays for "I need to know this" questions where you want the answer.
+- **`project research` no longer rejects a finished researcher** — `done` status was treated as busy; only `working` is now.
+- **Reboot env recovery** — if `HERDR_PROJECT` is missing (e.g. a session resumed after a reboot), the `project` CLI resolves the project from the state file that claims the current pane or workspace.
+
 ## 0.7.0
 
 - **Signal log and decision audit trail** — every `project prompt` and `project ask` appends to `~/.herdr/projects/<name>.signals.log` with timestamp, sender, receiver, and signal type. `project log` shows the trail; `project log-decision` records orchestrator decisions (wave transitions, spawn choices, reuse). Foundation for debugging stalled waves and post-run analysis.
