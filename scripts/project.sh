@@ -108,6 +108,11 @@ Commands:
   file                             Print the path to the state file
   dir                              Print the project working dir (shared, uncommitted scratch space)
   retire <old-pane-id>             Close a predecessor's tab after a DISTILL takeover (new agent runs this)
+  dump [--timeout SECS]            Pause: every other live agent writes unreported state to
+                                   <role>.final.md, then is stopped and its pane closed
+  reset [--timeout SECS]           Orchestrator: dump all agents + write a master-distill template
+                                   (from anywhere else: asks the orchestrator to run it)
+  reset --handoff                  Orchestrator: spawn a fresh orchestrator that boots from the distill
   log [--tail N]                   Print the signal log (default: last 50 entries)
   log-decision <decision-type> <payload>
                                    Log an orchestrator decision (wave transition, spawn, etc.)
@@ -510,6 +515,7 @@ cmd_prompt() {
     DISTILL\ *)               signal_type="DISTILL" ;;
     DISTILL_READY\ *)         signal_type="DISTILL_READY" ;;
     MERGED\ *)                signal_type="MERGED" ;;
+    RESET\ *)                 signal_type="RESET" ;;
   esac
 
   log_signal "${caller:-unknown}" "$role" "$signal_type" "$message"
@@ -1628,6 +1634,274 @@ cmd_dir() {
 # once it has registered and finished ramping up (asked the old pane anything it
 # needed). Closes the old agent's tab; its session ID is already preserved in
 # previous_sessions by register.
+# --- Pause / reset ---
+# Ask every live agent except the caller to write its unreported state to
+# $(project dir)/<role>.final.md, wait for all of them in parallel, then stop
+# them (session preserved) and close their panes. An agent that times out or
+# hits a permission prompt is left running so nothing is lost; re-running skips
+# agents that are already stopped, so a retry only touches the stragglers.
+DUMP_TIMEOUT_DEFAULT=300
+
+# Usage: _dump_agents <verb> <timeout-secs>. Returns 1 if any agent was left running.
+_dump_agents() {
+  local verb="$1" timeout="$2"
+  local f
+  f="$(ensure_state)"
+  local dir
+  dir="$(project_dir)"
+  local caller
+  caller="$(resolve_caller "$f")"
+
+  local targets=() role pane
+  while IFS=$'\t' read -r role pane; do
+    [[ -z "$role" || "$pane" == "${HERDR_PANE_ID:-}" ]] && continue
+    targets+=("$role")
+  done < <(jq -r '.agents | to_entries[] | select(.value.stopped != true) | [.key, .value.pane_id // ""] | @tsv' "$f")
+
+  if [[ ${#targets[@]} -eq 0 ]]; then
+    echo "no live agents to dump"
+    return 0
+  fi
+
+  local tmpd stamp
+  tmpd="$(mktemp -d "${TMPDIR:-/tmp}/project-dump.XXXXXX")"
+  stamp="$(date +%Y%m%dT%H%M%S)"
+  echo "dumping ${#targets[@]} agent(s): ${targets[*]} (timeout ${timeout}s)"
+
+  for role in "${targets[@]}"; do
+    pane="$(read_pane "$f" "$role")"
+    local final="$dir/$role.final.md"
+    # Archive a previous dump so "file exists" means "written this time"
+    [[ -f "$final" ]] && mv "$final" "$dir/$role.final.$stamp.md"
+    if [[ -z "$pane" ]] || ! herdr agent get "$pane" >/dev/null 2>&1; then
+      echo "gone" > "$tmpd/$role.status"
+      continue
+    fi
+    local msg="DUMP — the project is $verb. This session will be stopped once you go idle.
+If you hold state that isn't already durable (tracker, PR, pushed commits, project dir) — in-flight work, decisions not written down, open questions, something you were about to tell another agent — commit and push any WIP, then write it to $final. Keep it short; link instead of restating.
+If there's nothing, write no file.
+Don't signal or prompt other agents. Reply with one line: 'dumped' or 'nothing to dump'."
+    log_signal "${caller:-user}" "$role" "DUMP" "project $verb"
+    (
+      if out=$(_prompt "$pane" "$msg" --wait --until idle --until done --timeout $((timeout * 1000)) 2>&1); then
+        echo "ok" > "$tmpd/$role.status"
+      elif [[ "$out" == *agent_blocked* ]]; then
+        echo "blocked" > "$tmpd/$role.status"
+      elif [[ "$out" == *timeout* ]]; then
+        echo "timeout" > "$tmpd/$role.status"
+      else
+        echo "error: ${out%%$'\n'*}" > "$tmpd/$role.status"
+      fi
+    ) &
+  done
+  wait
+
+  local left=0 status result
+  printf '  %-16s %s\n' "ROLE" "RESULT"
+  for role in "${targets[@]}"; do
+    status="$(cat "$tmpd/$role.status" 2>/dev/null || echo "error: no result")"
+    pane="$(read_pane "$f" "$role")"
+    local final="$dir/$role.final.md"
+    case "$status" in
+      ok|gone)
+        if [[ -f "$final" ]]; then
+          result="dumped → $final"
+        elif [[ "$status" == "gone" ]]; then
+          result="pane already gone — marked stopped"
+        else
+          result="nothing to dump"
+        fi
+        cmd_stop "$role" >/dev/null
+        [[ "$status" == "ok" ]] && herdr pane close "$pane" >/dev/null 2>&1 || true
+        [[ "$status" == "ok" ]] && result="$result (stopped, pane closed)"
+        ;;
+      blocked) result="LEFT RUNNING — blocked on a prompt in $pane; answer it, then re-run"; left=$((left + 1)) ;;
+      timeout) result="LEFT RUNNING — still working after ${timeout}s; re-run to retry"; left=$((left + 1)) ;;
+      *)       result="LEFT RUNNING — $status"; left=$((left + 1)) ;;
+    esac
+    printf '  %-16s %s\n' "$role" "$result"
+  done
+  rm -rf "$tmpd"
+  [[ $left -eq 0 ]]
+}
+
+cmd_dump() {
+  local timeout="$DUMP_TIMEOUT_DEFAULT"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout) timeout="${2:-}"; shift 2 ;;
+      *) echo "usage: project dump [--timeout SECS]" >&2; exit 1 ;;
+    esac
+  done
+  local f
+  f="$(ensure_state)"
+  local caller
+  caller="$(resolve_caller "$f")"
+  local rc=0
+  _dump_agents "pausing" "$timeout" || rc=1
+  echo ""
+  if [[ $rc -ne 0 ]]; then
+    echo "some agents were left running — re-run 'project dump' once they're idle"
+  fi
+  if [[ -n "$caller" ]]; then
+    echo "you ($caller) are still running: write your own unreported state to $(project_dir)/$caller.final.md"
+  fi
+  echo "paused. To pick it up later: project recover (sessions are preserved and resumable)"
+  return $rc
+}
+
+cmd_reset() {
+  local timeout="$DUMP_TIMEOUT_DEFAULT" handoff=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout) timeout="${2:-}"; shift 2 ;;
+      --handoff) handoff=true; shift ;;
+      *) echo "usage: project reset [--timeout SECS] | project reset --handoff" >&2; exit 1 ;;
+    esac
+  done
+  local f
+  f="$(ensure_state)"
+  local caller
+  caller="$(resolve_caller "$f")"
+  local name
+  name="$(read_field "$f" "project")"
+  local reset_file
+  reset_file="$(project_dir)/orchestrator.reset.md"
+
+  # Only the orchestrator can write the master distill — anyone else hands the
+  # request to it rather than tearing the project down from outside.
+  if [[ "$caller" != "orchestrator" ]]; then
+    local orch_pane
+    orch_pane="$(read_pane "$f" "orchestrator")"
+    local orch_stopped
+    orch_stopped=$(jq -r '.agents.orchestrator.stopped // false' "$f")
+    if $handoff || [[ -z "$orch_pane" || "$orch_stopped" == "true" ]] || ! herdr agent get "$orch_pane" >/dev/null 2>&1; then
+      echo "error: project reset runs in the orchestrator's pane, and no live orchestrator was found" >&2
+      echo "  to pause everything instead: project --project $name dump" >&2
+      exit 1
+    fi
+    _prompt "$orch_pane" "RESET — ${caller:-the user} asked for a full project reset. Follow the skill's § Resetting the project: run 'project reset'." >/dev/null
+    log_signal "${caller:-user}" "orchestrator" "RESET" "reset requested"
+    echo "asked the orchestrator ($orch_pane) to run the reset"
+    return 0
+  fi
+
+  if $handoff; then
+    _reset_handoff "$f" "$name" "$reset_file"
+    return
+  fi
+
+  local rc=0
+  _dump_agents "resetting" "$timeout" || rc=1
+
+  [[ -f "$reset_file" ]] && mv "$reset_file" "${reset_file%.md}.$(date +%Y%m%dT%H%M%S).md"
+  {
+    echo "# Project reset — $name"
+    echo ""
+    echo "Master distill from the outgoing orchestrator ($(date -u +%Y-%m-%dT%H:%MZ)). The successor boots from this file."
+    echo "Keep it short: link PRs, tickets, and files instead of restating them. Delete a section rather than leave TODO."
+    echo ""
+    echo "## Shipped"
+    echo "TODO — merged PRs / closed tickets, one line each."
+    echo ""
+    echo "## In flight"
+    echo "TODO — open PRs, pushed branches, half-done tickets: state and next step for each."
+    echo ""
+    echo "## Decisions"
+    echo "TODO — decisions that shaped the work and must survive the reset, with the why. Skip what the tracker already records."
+    echo ""
+    echo "## Remaining work"
+    echo "TODO — tickets not started, in dependency order, plus anything the tracker doesn't show."
+    echo ""
+    echo "## Waiting on the user"
+    echo "TODO — open questions, reviews, approvals."
+    echo ""
+    echo "## Notes for the successor"
+    echo "TODO — what to do first, what to avoid, what wasted time."
+    echo ""
+    echo "## Agent dumps"
+    echo "Read one only when you touch that agent's area."
+    # Current dumps only — archived ones are <role>.final.<timestamp>.md
+    local d any=false
+    for d in "$(project_dir)"/*.final.md; do
+      [[ -f "$d" ]] || continue
+      echo "- $d"; any=true
+    done
+    $any || echo "- (none — no agent had unreported state)"
+  } > "$reset_file"
+
+  echo ""
+  if [[ $rc -ne 0 ]]; then
+    echo "some agents were left running — resolve them and re-run 'project reset' before handing off"
+    echo "(re-running only prompts the agents still live; it re-creates the template)"
+    return 1
+  fi
+  echo "next: fill in $reset_file (every TODO), then run: project reset --handoff"
+}
+
+_reset_handoff() {
+  local f="$1" name="$2" reset_file="$3"
+  if [[ ! -f "$reset_file" ]]; then
+    echo "error: no $reset_file — run 'project reset' first" >&2
+    exit 1
+  fi
+  if grep -q '^TODO' "$reset_file"; then
+    echo "error: $reset_file still has TODO sections — fill them in or delete them" >&2
+    exit 1
+  fi
+  local live
+  live=$(jq -r '[.agents | to_entries[] | select(.key != "orchestrator" and .value.stopped != true) | .key] | join(" ")' "$f")
+  if [[ -n "$live" ]]; then
+    echo "error: agents still live: $live — run 'project reset' again to dump and stop them" >&2
+    exit 1
+  fi
+  local ws
+  ws="$(read_field "$f" "workspace_id")"
+  if [[ -z "$ws" ]]; then
+    echo "error: project has no workspace_id — can't open a tab" >&2
+    exit 1
+  fi
+  local old_pane="${HERDR_PANE_ID:-}"
+  local epic
+  epic="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
+
+  local tab_out pane_id
+  tab_out=$(herdr tab create --workspace "$ws" --cwd "$PWD" --label "orchestrator" \
+    --env "HERDR_PROJECT=$name" --no-focus 2>&1) || {
+    echo "error: failed to create tab" >&2
+    echo "$tab_out" >&2
+    exit 1
+  }
+  pane_id=$(echo "$tab_out" | jq -r '.result.root_pane.pane_id // empty')
+  if [[ -z "$pane_id" ]]; then
+    echo "error: tab create returned no pane ID" >&2
+    echo "$tab_out" >&2
+    exit 1
+  fi
+  local attempts=0
+  while ! herdr agent start orchestrator --kind claude --pane "$pane_id" -- -n orchestrator 2>/dev/null \
+      | jq -e '.result' >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [[ $attempts -ge 10 ]]; then
+      echo "error: pane $pane_id not ready after 5s — failed to start successor" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+
+  _prompt "$pane_id" "/start-project $epic
+
+You are a fresh orchestrator taking over after a project RESET. Before Step 1:
+1. Run: project register orchestrator
+2. Read $reset_file — your predecessor's master distill. Trust it; check an item against the tracker only when you act on it. Read the agent dump files it lists only when you touch that area.
+3. Your predecessor is still live in pane $old_pane. If anything is unclear, ask it: herdr agent prompt $old_pane '<question>' --wait, then herdr agent read $old_pane. When you have no more questions, run: project retire $old_pane
+4. Every other agent from the previous run is stopped. Don't resume their sessions — spawn fresh agents as the skill describes, and give the new librarian the path to librarian.final.md if one is listed.
+Then continue from Step 1, building the plan from the tracker plus the distill." >/dev/null
+
+  log_signal "orchestrator" "orchestrator" "RESET" "successor spawned in $pane_id"
+  echo "successor orchestrator started in $pane_id — it will retire this pane ($old_pane) when it's done asking questions"
+}
+
 cmd_retire() {
   local old_pane="${1:-}"
   if [[ -z "$old_pane" ]]; then
@@ -1787,6 +2061,8 @@ case "$cmd" in
   file)       cmd_file ;;
   dir)        cmd_dir ;;
   retire)     cmd_retire "$@" ;;
+  dump)       cmd_dump "$@" ;;
+  reset)      cmd_reset "$@" ;;
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;
   feedback)   cmd_feedback "$@" ;;

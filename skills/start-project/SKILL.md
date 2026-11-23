@@ -407,6 +407,18 @@ The successor owns the old agent's shutdown — it registers first (so signals r
 
 The distill file is the agent's own summary of where it left off — what's done, what's left, current approach, decisions made. It lives in the project dir (not the worktree), so it never shows up in `git status`.
 
+### Pausing and resetting the project
+
+Two commands wind the project down. Run them only when the user asks for it, or when you send a `RESET —` signal yourself.
+
+**Pause** (end of day, or switching to another epic): `project dump`. Every other live agent writes its unreported state to `$(project dir)/<role>.final.md`, or writes nothing. All prompts go out in parallel. Each agent is then stopped with its session preserved, and its pane is closed. Then write your own `orchestrator.final.md`. To pick the project back up, follow § Reboot recovery.
+
+**Reset** (context has collapsed across the project and a clean start beats carrying it forward): `project reset`. If the user runs it from outside, you get `RESET — ...` and run it yourself. It does the same dump, then writes a master-distill template to `$(project dir)/orchestrator.reset.md`.
+1. Fill in every TODO: shipped, in flight, decisions, remaining work, waiting on the user, notes for the successor. Link PRs, tickets and files instead of restating them. You may read the agent dump files it lists; this is the one time you read them, because you are writing the summary.
+2. Run `project reset --handoff`. It spawns a fresh orchestrator in a new tab, which registers, reads the distill, can question you, and then retires your pane. Don't do anything else after the handoff.
+
+Either command leaves running any agent that times out or is stuck on a permission prompt, so nothing is lost. Deal with that agent, then re-run the command. A re-run only prompts agents that are still live. `--handoff` refuses to run while any agent is live or any TODO is left.
+
 ## Step 5a: Spawn tester (API / parity work only)
 
 When a worker's DONE signal includes a test brief, spawn an independent tester agent. The tester and worker talk directly — you just set up the introduction.

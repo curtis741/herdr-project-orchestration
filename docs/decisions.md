@@ -81,6 +81,8 @@ Findings from real epic runs that have been worked into skills or DESIGN.md.
 
 - **Worker request flow too many hops / throwaway worker for one-off problems** (2026-11-20 run, researcher) → `project spinoff` + `spinoff-done` in `scripts/project.sh`; spinoff mode and § Spinning off a fix in `project-worker/SKILL.md`; `researcher.md` scope boundaries; `librarian.md` spinoff handling; `start-project/SKILL.md` § Spinoffs; `DESIGN.md` decision rewritten. Brief template (problem / why / evidence / fix / don't touch / done when) added after the researcher asked for the *why* to be included.
 
+- **Full project reset was a 10-minute manual sequence** (2-week, 3-epic run, orchestrator + user): prompt all agents to dump state, wait, stop and close them, write a master distill, boot a fresh orchestrator from it → `project dump` + `project reset [--handoff]` in `scripts/project.sh`; `start-project/SKILL.md` § Pausing and resetting the project; `DESIGN.md` § Knowledge pressure and distill.
+
 ## Feedback — New
 
 Findings not yet worked into skills. Move to "Applied" after routing.

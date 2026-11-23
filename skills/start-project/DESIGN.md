@@ -274,6 +274,8 @@ If defer:
   Orchestrator → agent: DISTILL_DEFER — finish current step first
 ```
 
+**Project-wide reset:** `project reset` is distill applied to the whole project at once. A dump runs in parallel (`DUMP` → each agent writes `<role>.final.md` or nothing, then is stopped and its pane closed), the orchestrator writes a master distill (`orchestrator.reset.md`), and `reset --handoff` boots a fresh orchestrator from it the same way a distill successor boots. The successor spawns fresh agents instead of resuming old sessions, for the same reason distill restarts fresh. `project dump` alone is the pause variant: the same dump, no successor, and sessions stay resumable. Agents that don't finish in time are left running, never killed mid-write.
+
 **Key design choices:**
 - DISTILL goes directly to the orchestrator, not through the librarian. It's an operational signal about agent health, not a lifecycle event. The librarian doesn't need to know or act on it.
 - Restart is fresh, not `--resume`. The point is clean context — `--resume` would carry the noise forward.
