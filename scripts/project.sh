@@ -13,6 +13,16 @@ set -euo pipefail
 PROJECTS_DIR="$HOME/.herdr/projects"
 mkdir -p "$PROJECTS_DIR"
 
+# Deliver a prompt to an agent pane without clobbering a human's half-typed draft.
+# `herdr agent prompt` types into the input box, so any draft gets concatenated
+# with the incoming message. Ctrl+S is Claude Code's stash: it parks the draft,
+# and Claude Code restores it automatically after the next submit. On an empty
+# input it's a no-op. Same args as `herdr agent prompt`.
+_prompt() {
+  herdr agent send-keys "$1" ctrl+s >/dev/null 2>&1 || true
+  herdr agent prompt "$@"
+}
+
 # --- Auto-update check (never blocks) ---
 _update_check() {
   local marker="$PROJECTS_DIR/.last-update-check"
@@ -291,7 +301,7 @@ cmd_start() {
   cmd_register orchestrator "$pane_id"
 
   # Prompt the orchestrator to load the skill
-  herdr agent prompt "$pane_id" "/start-project $name" >&2
+  _prompt "$pane_id" "/start-project $name" >&2
 
   echo "project started: $name (workspace $ws_id, pane $pane_id)" >&2
 }
@@ -336,7 +346,7 @@ cmd_register() {
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
-      herdr agent prompt "$orch_pane" "READY — $role" 2>/dev/null || true
+      _prompt "$orch_pane" "READY — $role" 2>/dev/null || true
       log_signal "$role" "orchestrator" "READY" "$role registered"
     fi
   fi
@@ -471,7 +481,7 @@ cmd_prompt() {
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
-      herdr agent prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original message: $message" 2>/dev/null || true
+      _prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original message: $message" 2>/dev/null || true
       log_signal "${caller:-unknown}" "orchestrator" "NEED" "$role stopped — escalated. Original: $message"
       echo "escalated to orchestrator: $role is stopped" >&2
     else
@@ -503,7 +513,7 @@ cmd_prompt() {
   fi
 
   # shellcheck disable=SC2086
-  herdr agent prompt "$pane" "$message" $wait_flag $timeout_flag
+  _prompt "$pane" "$message" $wait_flag $timeout_flag
 }
 
 cmd_ask() {
@@ -558,7 +568,7 @@ cmd_ask() {
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
-      herdr agent prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original question: $message" 2>/dev/null || true
+      _prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original question: $message" 2>/dev/null || true
       echo "escalated to orchestrator: $role is stopped" >&2
     else
       echo "error: $role is stopped and orchestrator is not reachable" >&2
@@ -574,7 +584,7 @@ cmd_ask() {
 
   # Send the prompt and wait for the agent to finish
   local prompt_result
-  prompt_result=$(herdr agent prompt "$pane" "$message" --wait --timeout "$timeout" 2>&1)
+  prompt_result=$(_prompt "$pane" "$message" --wait --timeout "$timeout" 2>&1)
   local prompt_exit=$?
 
   if [[ $prompt_exit -ne 0 ]]; then
@@ -722,7 +732,7 @@ cmd_research() {
     callback=" Reply with: project prompt $my_role '<your answer>'"
   fi
 
-  herdr agent prompt "$target_pane" "${prefix}RESEARCH — $question${callback}" >/dev/null
+  _prompt "$target_pane" "${prefix}RESEARCH — $question${callback}" >/dev/null
   log_signal "${my_role:-unknown}" "$target" "RESEARCH" "$question"
   echo "sent to $target${my_role:+ (reply will come back to $my_role)}"
 }
@@ -744,7 +754,7 @@ cmd_punt() {
   read -r target target_pane <<<"$routed"
 
   local from="${my_role:-an agent}"
-  herdr agent prompt "$target_pane" "FROM($from): PUNT — $problem
+  _prompt "$target_pane" "FROM($from): PUNT — $problem
 You own this — $from is not waiting on an answer. Investigate, decide what should happen, and act (create a ticket, flag the orchestrator, or ask the user). Only message $from if the outcome changes their current ticket, and then in one line." >/dev/null
   log_signal "$from" "$target" "PUNT" "$problem"
   echo "punted to $target — it owns this now; you'll only hear back if it affects your ticket"

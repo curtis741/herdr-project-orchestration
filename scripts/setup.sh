@@ -103,6 +103,8 @@ elif [[ "$old_version" != "$new_version" ]]; then
       [[ "$orch_status" != "unknown" ]] || continue
 
       project_name=$(jq -r '.project // empty' "$state_file" 2>/dev/null)
+      # Stash any half-typed draft first (Claude Code restores it after submit)
+      herdr agent send-keys "$orch_pane" ctrl+s >/dev/null 2>&1 || true
       herdr agent prompt "$orch_pane" \
         "PLUGIN UPGRADE — project-orchestration v$old_version → v$new_version. Reload /start-project and tell your agents to reload their skills (/project-worker, /project-librarian)." \
         2>/dev/null && \

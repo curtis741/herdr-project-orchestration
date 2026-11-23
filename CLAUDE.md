@@ -68,7 +68,7 @@ Use this when testing orchestration changes on this repo, or when a tracker isn'
 
 ## Prompting running agents
 
-When the user asks you to message a running agent (e.g. "ask pane wF:p4W about X"), you're outside the project — no `$HERDR_PROJECT`, not a registered agent. Use `herdr agent prompt` directly, and prefix with `FEEDBACK (from project maintainer):` so the agent knows it's a meta question about the system, not a task instruction.
+When the user asks you to message a running agent (e.g. "ask pane wF:p4W about X"), you're outside the project — no `$HERDR_PROJECT`, not a registered agent. Use `herdr agent prompt` directly (run `herdr agent send-keys <pane> ctrl+s` first so the user's half-typed draft is stashed rather than merged into your message), and prefix with `FEEDBACK (from project maintainer):` so the agent knows it's a meta question about the system, not a task instruction.
 
 ## Upstream dependencies
 

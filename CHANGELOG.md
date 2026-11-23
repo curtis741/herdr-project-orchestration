@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **Signals no longer merge into a half-typed message** — every prompt the CLI delivers first stashes any draft in the target pane's input box (Claude Code's Ctrl+S). Claude Code restores the draft after the signal is submitted.
+
 ## 0.8.0
 
 - **Project working dir** — `project dir` prints `~/.herdr/projects/<project>/`, now the shared, uncommitted working area for all agents: test plans, context files, cross-agent learnings, test scripts, distill files. Prefix files with your role. Prefer writing a file there and passing the path over pasting large content into prompts.
