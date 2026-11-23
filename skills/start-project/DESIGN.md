@@ -98,7 +98,7 @@ This keeps ticket management off the orchestrator (stays lightweight) and off wo
 Standalone shell script. State file at `~/.herdr/projects/<project-name>.json`. Single writer (orchestrator), many readers (all agents). Project name is injected via `HERDR_PROJECT` env var (orchestrator passes `--env HERDR_PROJECT=<name>` on every `herdr tab create`).
 
 - `project init <project-name> [workspace-id]` — create state file, print `export HERDR_PROJECT=<name>`
-- `project next-worker` — print the next available worker name (NATO phonetic alphabet: alpha, bravo, charlie...)
+- `project next-worker` — print the next unused worker name (NATO phonetic alphabet: alpha, bravo, charlie... then alpha2, bravo2...). Names are never reused within a project
 - `project register <role> <pane-id>` — add agent to roster after spawn
 - `project assign <role> <ticket-key>` — track a ticket assignment to a worker (supports multiple tickets per worker)
 - `project prompt <role> <message>` — fire-and-forget signal (resolve role → pane ID, run `herdr agent prompt`)

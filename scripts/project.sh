@@ -87,7 +87,7 @@ Commands:
   init <project-name> [workspace-id]  Create a project state file (orchestrator only)
   register <role>                   Register this agent and signal READY to orchestrator
   stop <role>                      Stop an agent (preserves session ID for resume)
-  next-worker                      Print the next available worker name (NATO alphabet)
+  next-worker                      Print the next unused worker name (NATO alphabet, then alpha2...)
   assign <role> <ticket-key>       Track a ticket assignment to a worker
   prompt <role> <message>          Send a message (fire-and-forget)
   prompt <role> <message> --wait [--timeout N]
@@ -367,16 +367,21 @@ cmd_register() {
 cmd_next_worker() {
   local f
   f="$(ensure_state)"
-  # Active = registered and not stopped. Stopped names are available for reuse.
-  local active
-  active=$(jq -r '.agents | to_entries[] | select(.value.stopped != true) | .key' "$f")
-  for name in "${WORKER_NAMES[@]}"; do
-    if ! echo "$active" | grep -qx "$name"; then
-      echo "$name"
-      return
-    fi
+  # Never reuse a name within a project — a stopped worker's entry holds its
+  # session/ticket history. After zulu, wrap to alpha2, bravo2, ...
+  local used
+  used=$(jq -r '.agents | keys[]' "$f")
+  local round=1 suffix name
+  while true; do
+    if [[ $round -eq 1 ]]; then suffix=""; else suffix="$round"; fi
+    for name in "${WORKER_NAMES[@]}"; do
+      if ! echo "$used" | grep -qx "$name$suffix"; then
+        echo "$name$suffix"
+        return
+      fi
+    done
+    round=$((round + 1))
   done
-  echo "worker-$(date +%s)"
 }
 
 cmd_assign() {

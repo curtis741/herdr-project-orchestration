@@ -293,7 +293,7 @@ Pick the next available worker name:
 worker_name=$(project next-worker)
 ```
 
-This returns NATO phonetic names in order: alpha, bravo, charlie, etc.
+This returns NATO phonetic names in order: alpha, bravo, charlie, etc., wrapping to alpha2 after zulu. Names are never reused within a project.
 
 ```bash
 herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "$worker_name — <ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
