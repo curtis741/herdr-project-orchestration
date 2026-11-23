@@ -126,9 +126,17 @@ When the researcher discovers missing work, it creates child tickets under the p
 
 The researcher has access to the ticket tracker's MCP tools and permission to create tickets.
 
-### Researcher cannot spawn workers for trivial fixes
+### One-off fixes are spun off, not routed through the orchestrator
 
-When the researcher finds a small, self-contained fix (a doc typo, a missing config line), it cannot create a worker on its own. It must flag it to the orchestrator, which decides whether to spawn a worker or handle it differently. The overhead of orchestrator → worker spawning is disproportionate for one-line fixes, but letting the researcher make changes directly risks scope creep and branch confusion (the researcher sits on main). Accepted trade-off: the latency of going through the orchestrator is worth the clean role separation.
+When any agent (or the user) has a scoped, self-contained fix that isn't worth a ticket, it runs `project spinoff "<title>"` with the brief on stdin. The script writes the brief to `$(project dir)/spinoffs/<id>.md`, creates a `spinoff-<name>` worktree off origin/main, opens a tab and boots a worker in spinoff mode. The worker reads the brief file itself. The orchestrator gets a one-line FYI and takes no action.
+
+This replaced "researcher cannot spawn workers for trivial fixes". That rule cost three messages per fix (requester → orchestrator, orchestrator spawns, requester briefs the worker), and the orchestrator ended up relaying context instead of dispatching. Spawning in the CLI keeps role boundaries intact: agents still don't spin up sub-agents on their own, and the researcher still never edits code.
+
+- **Outside the wave cap.** A one-off usually blocks something or is a problem in general, so it shouldn't wait behind wave work. A separate cap (2 concurrent spinoffs) stops runaway spawning. Past that, the requester punts instead.
+- **No ticket.** The PR references the epic. The librarian handles `spinoff-*` keys without transitions or DAG checks.
+- **Fire-and-forget.** The requester handed it off so it wouldn't have to carry it. `--notify` returns one `SPINOFF_DONE` line for requesters who are blocked on the fix.
+- **Self-closing.** After merge (or a no-op), the worker runs `project spinoff-done`, which stops it and closes its tab. `project cleanup` removes the worktree.
+- **Fixes only, not research.** Investigations still go to the researcher (`research` / `punt`), because the researcher's accumulated context is the value.
 
 ### DAG ownership is shared: orchestrator builds, librarian monitors
 

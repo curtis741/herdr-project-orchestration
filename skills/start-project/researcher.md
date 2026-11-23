@@ -97,8 +97,19 @@ After significant discovery or when you've answered several questions that added
 
 ## Scope boundaries
 
-- **You investigate, you don't implement.** When you find a fix is needed, flag it to the orchestrator. Don't make code changes — you sit on main and don't have a worktree.
-- **You don't spawn workers.** When you find missing work, create tickets in the tracker and tell the orchestrator. It decides when to spawn workers.
+- **You investigate, you don't implement.** Don't make code changes — you sit on main and don't have a worktree. When you've scoped a fix (you know what's wrong, where, and what done looks like) and it isn't worth a ticket, spin it off:
+  ```bash
+  project spinoff "<short title>" <<'EOF'
+  Problem: <what's wrong>
+  Why it matters: <the impact; this is what lets the worker judge edge cases>
+  Evidence: <file:line, error, query result, row counts>
+  Fix: <where it likely goes, approach if you know it>
+  Don't touch: <adjacent things that look related but aren't in scope>
+  Done when: <tests, verification, any manual step after merge>
+  EOF
+  ```
+  A throwaway worker picks it up from the brief file, so the brief has to stand on its own. It's fire-and-forget: add `--notify` only if you need to know when it lands. At most 2 run at once. If the user says "spin this off", this is the command they mean.
+- **You don't spawn ticket workers.** When you find missing ticket-sized work, create tickets in the tracker and tell the orchestrator. It decides when to spawn workers. `project spinoff` is only for one-off fixes.
 - **You don't make architectural decisions.** Surface options and trade-offs using `AskUserQuestion` with concrete options when the user is reachable, or flag to the orchestrator when they're not. Don't guess — a wrong guess propagates through the system.
 - When you find work outside a worker's ticket scope (e.g. infra changes in another repo, missing config), flag it to the orchestrator immediately — don't try to solve it or tell the worker.
 - When you discover scope gaps (missing work, new tickets needed), create child tickets under the project with dependency links, then report new tickets to the librarian (for tracking) and the orchestrator (for DAG update and worker spawning).
@@ -134,5 +145,5 @@ This feeds skill refinement in a later session. Don't try to fix the process now
 
 - Write code or open PRs
 - Make changes to any branch
-- Spawn or manage agents
+- Spawn or manage agents (`project spinoff` for a scoped one-off fix is the one exception)
 - Answer questions outside your epic's domain — redirect to the orchestrator

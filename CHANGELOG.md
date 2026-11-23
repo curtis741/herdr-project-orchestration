@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **`project spinoff "<title>" [--notify]`** — new: put a throwaway worker on a scoped one-off fix. Any agent (or the user) can run it with a brief on stdin (Problem / Why it matters / Evidence / Fix / Don't touch / Done when). The CLI spawns the worker directly. No orchestrator approval, outside the wave cap, max 2 at once. The PR references the epic, with no ticket. It's fire-and-forget unless `--notify` is passed. Use it when you've scoped a fix; keep using `punt` when you only suspect a problem.
+- **Spinoff lifecycle** — the spinoff worker sends `COMPLETE — PR #N for spinoff-<name>` to the librarian as usual. The librarian skips transitions and DAG checks, tells the watcher, and relays to the orchestrator so the user can review. On merge, the librarian ingests and sends `MERGED` to the worker, which runs `project spinoff-done "<outcome>"` to stop and close its tab. The orchestrator gets a `SPINOFF` FYI and doesn't act on it.
 - **Signals no longer merge into a half-typed message** — every prompt the CLI delivers first stashes any draft in the target pane's input box (Claude Code's Ctrl+S). Claude Code restores the draft after the signal is submitted.
 
 ## 0.8.0

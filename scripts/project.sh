@@ -100,6 +100,9 @@ Commands:
   info                             Print epic key and workspace ID
   research <question>               Ask a research question (async, answer comes back via prompt)
   punt "<problem>"                 Hand a suspected problem to the researcher to own (no answer comes back)
+  spinoff "<title>" [--notify] [--repo <path>] <<brief
+                                   Spawn a throwaway worker on a scoped one-off fix (brief on stdin)
+  spinoff-done "<outcome>"         Spinoff worker's last command: notify requester, stop, close tab
   resolve <role>                   Print the pane ID for a role (for scripting)
   session <role>                   Print the session ID for a role
   file                             Print the path to the state file
@@ -342,7 +345,9 @@ cmd_register() {
     "$f" > "$tmp" && mv "$tmp" "$f"
 
   # Signal the orchestrator that this agent is ready (unless we ARE the orchestrator)
-  if [[ "$role" != "orchestrator" ]]; then
+  local is_spinoff
+  is_spinoff=$(jq -r --arg role "$role" '.agents[$role].spinoff != null' "$f")
+  if [[ "$role" != "orchestrator" && "$is_spinoff" != "true" ]]; then
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
@@ -407,7 +412,8 @@ cmd_stop() {
 
   local tmp="${f}.tmp.$$"
   jq --arg role "$role" --arg sid "$sid" \
-    '.agents[$role].stopped = true | if $sid != "" then .agents[$role].session_id = $sid else . end | .agents[$role].stopped_at = (now | todate)' \
+    '.agents[$role].stopped = true | if $sid != "" then .agents[$role].session_id = $sid else . end | .agents[$role].stopped_at = (now | todate)
+     | del(.agents[$role].spinoff)' \
     "$f" > "$tmp" && mv "$tmp" "$f"
   log_signal "orchestrator" "$role" "STOP" "$role stopped"
   echo "stopped: $role (session preserved)"
@@ -503,6 +509,7 @@ cmd_prompt() {
     RESEARCH\ *)              signal_type="RESEARCH" ;;
     DISTILL\ *)               signal_type="DISTILL" ;;
     DISTILL_READY\ *)         signal_type="DISTILL_READY" ;;
+    MERGED\ *)                signal_type="MERGED" ;;
   esac
 
   log_signal "${caller:-unknown}" "$role" "$signal_type" "$message"
@@ -758,6 +765,198 @@ cmd_punt() {
 You own this — $from is not waiting on an answer. Investigate, decide what should happen, and act (create a ticket, flag the orchestrator, or ask the user). Only message $from if the outcome changes their current ticket, and then in one line." >/dev/null
   log_signal "$from" "$target" "PUNT" "$problem"
   echo "punted to $target — it owns this now; you'll only hear back if it affects your ticket"
+}
+
+# "Problem found, go fix it" — spawn a throwaway worker on a scoped one-off fix.
+# The brief goes to a file the new worker reads itself, so it never passes
+# through the orchestrator's context. Not orchestrator-gated and outside the
+# wave cap, but capped at SPINOFF_MAX concurrent spinoffs.
+SPINOFF_MAX=2
+
+cmd_spinoff() {
+  local title="" notify=false repo_path=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --notify) notify=true; shift ;;
+      --repo) repo_path="${2:-}"; shift 2 ;;
+      *) title="${title:+$title }$1"; shift ;;
+    esac
+  done
+  if [[ -z "$title" ]]; then
+    echo "usage: project spinoff \"<title>\" [--notify] [--repo <path>] <<'EOF'" >&2
+    echo "Problem: / Why it matters: / Evidence: / Fix: / Don't touch: / Done when:" >&2
+    echo "EOF" >&2
+    exit 1
+  fi
+  if [[ -t 0 ]]; then
+    echo "error: pass the brief on stdin (heredoc) — the spinoff worker reads it from a file" >&2
+    exit 1
+  fi
+  local brief
+  brief="$(cat)"
+  if [[ -z "${brief//[[:space:]]/}" ]]; then
+    echo "error: empty brief — the spinoff worker has no other context" >&2
+    exit 1
+  fi
+
+  local f
+  f="$(ensure_state)"
+  local caller
+  caller="$(resolve_caller "$f")"
+  local from="${caller:-user}"
+
+  local active
+  active=$(jq '[.agents[] | select(.stopped != true and .spinoff != null)] | length' "$f")
+  if [[ "$active" -ge "$SPINOFF_MAX" ]]; then
+    echo "error: $active spinoffs already running (max $SPINOFF_MAX) — use 'project punt' instead" >&2
+    exit 1
+  fi
+
+  # Default to the main checkout of the repo we're in (works from a worktree too)
+  if [[ -z "$repo_path" ]]; then
+    local common
+    common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || {
+      echo "error: not in a git repo — pass --repo <path>" >&2
+      exit 1
+    }
+    repo_path="$(dirname "$common")"
+  fi
+
+  local ws
+  ws="$(read_field "$f" "workspace_id")"
+  if [[ -z "$ws" ]]; then
+    echo "error: project has no workspace_id — can't open a tab" >&2
+    exit 1
+  fi
+
+  local name id
+  name="$(cmd_next_worker)"
+  id="spinoff-$name"
+  if [[ -e "$repo_path/.worktrees/$id" ]] || git -C "$repo_path" show-ref --quiet "refs/heads/$id"; then
+    id="$id-$(date +%s)"
+  fi
+
+  local project epic
+  project="$(read_field "$f" "project")"
+  epic="$(echo "$project" | tr '[:lower:]' '[:upper:]')"
+
+  local brief_file
+  brief_file="$(project_dir)/spinoffs/$id.md"
+  mkdir -p "$(dirname "$brief_file")"
+  {
+    echo "# Spinoff: $title"
+    echo
+    echo "- Requested by: $from"
+    echo "- Project: $epic"
+    echo "- Worktree: .worktrees/$id (branch $id)"
+    echo "- Notify requester on finish: $notify"
+    echo
+    echo "## Brief"
+    echo
+    echo "$brief"
+  } > "$brief_file"
+
+  git -C "$repo_path" fetch origin main --quiet 2>/dev/null || true
+  git -C "$repo_path" worktree add ".worktrees/$id" -b "$id" origin/main --quiet || {
+    echo "error: failed to create worktree .worktrees/$id in $repo_path" >&2
+    exit 1
+  }
+
+  local tab_out pane_id
+  tab_out=$(herdr tab create --workspace "$ws" --cwd "$repo_path" --label "$name — spinoff" \
+    --env "HERDR_PROJECT=$project" --no-focus 2>&1) || {
+    echo "error: failed to create tab" >&2
+    echo "$tab_out" >&2
+    exit 1
+  }
+  pane_id=$(echo "$tab_out" | jq -r '.result.root_pane.pane_id // empty')
+  if [[ -z "$pane_id" ]]; then
+    echo "error: tab create returned no pane ID" >&2
+    echo "$tab_out" >&2
+    exit 1
+  fi
+
+  local short_title="$title"
+  [[ ${#short_title} -gt 40 ]] && short_title="${short_title:0:37}..."
+  local attempts=0
+  while ! herdr agent start "$name" --kind claude --pane "$pane_id" -- -n "$name — spinoff: $short_title" 2>/dev/null \
+      | jq -e '.result' >/dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [[ $attempts -ge 10 ]]; then
+      echo "error: pane $pane_id not ready after 5s — failed to start spinoff agent" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+
+  # Pre-register so the worker shows up in roster/status/cleanup immediately.
+  # The worker's own 'project register' keeps these fields.
+  local tmp="${f}.tmp.$$"
+  jq --arg role "$name" --arg pane "$pane_id" --arg id "$id" --arg from "$from" \
+     --arg title "$title" --arg brief "$brief_file" --argjson notify "$notify" \
+    '.agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at)) + {
+       pane_id: $pane, current_ticket: $id,
+       tickets: (((.agents[$role].tickets) // []) + [$id] | unique),
+       spinoff: {from: $from, title: $title, brief: $brief, notify: $notify}
+     }' "$f" > "$tmp" && mv "$tmp" "$f"
+
+  _prompt "$pane_id" "Spinoff worker $name for project $epic — a throwaway worker on one scoped fix.
+Your role is '$name'. Your worktree is .worktrees/$id/ (branch $id).
+Your brief: $brief_file
+
+Run /project-worker and follow § Spinoff mode." >/dev/null
+
+  log_signal "$from" "$name" "SPINOFF" "$title"
+  local orch_pane
+  orch_pane="$(read_pane "$f" "orchestrator")"
+  if [[ -n "$orch_pane" && "$from" != "orchestrator" ]]; then
+    _prompt "$orch_pane" "SPINOFF — $from spun off \"$title\" to $name. FYI only — it reports through the librarian like any worker; no action needed." >/dev/null 2>&1 || true
+  fi
+
+  echo "spun off to $name (pane $pane_id, worktree .worktrees/$id)"
+  if $notify; then
+    echo "you'll get one line back when it's finished"
+  else
+    echo "fire-and-forget — you won't hear back"
+  fi
+}
+
+# Spinoff worker's last command: notify the requester (if asked), mark itself
+# stopped, and close its own tab. Worktree is left for 'project cleanup'.
+cmd_spinoff_done() {
+  local outcome="$*"
+  if [[ -z "$outcome" ]]; then
+    echo "usage: project spinoff-done \"<one-line outcome>\"" >&2
+    exit 1
+  fi
+  local f
+  f="$(ensure_state)"
+  local me
+  me="$(resolve_caller "$f")"
+  if [[ -z "$me" ]] || [[ "$(jq -r --arg r "$me" '.agents[$r].spinoff // empty' "$f")" == "" ]]; then
+    echo "error: spinoff-done is only for spinoff workers (caller: ${me:-unregistered})" >&2
+    exit 1
+  fi
+  local from title notify
+  from=$(jq -r --arg r "$me" '.agents[$r].spinoff.from' "$f")
+  title=$(jq -r --arg r "$me" '.agents[$r].spinoff.title' "$f")
+  notify=$(jq -r --arg r "$me" '.agents[$r].spinoff.notify' "$f")
+
+  if [[ "$notify" == "true" ]]; then
+    local from_pane from_stopped
+    from_pane="$(read_pane "$f" "$from")"
+    from_stopped=$(jq -r --arg r "$from" '.agents[$r].stopped // false' "$f")
+    if [[ -n "$from_pane" && "$from_stopped" != "true" ]]; then
+      _prompt "$from_pane" "FROM($me): SPINOFF_DONE — \"$title\": $outcome" >/dev/null 2>&1 || true
+    fi
+  fi
+  log_signal "$me" "${from}" "SPINOFF_DONE" "$title: $outcome"
+
+  cmd_stop "$me" >/dev/null
+  echo "spinoff finished — closing this tab"
+  local tab
+  tab=$(herdr pane get "${HERDR_PANE_ID:-}" 2>/dev/null | jq -r '.result.pane.tab_id // empty' 2>/dev/null || true)
+  [[ -n "$tab" ]] && herdr tab close "$tab" >/dev/null 2>&1 || true
 }
 
 cmd_log() {
@@ -1291,6 +1490,7 @@ cmd_observe() {
         SCOPE)         sig_icon="↗" ;;
         FEEDBACK)      sig_icon="✎" ;;
         RESEARCH)      sig_icon="◇" ;;
+        SPINOFF|SPINOFF_DONE) sig_icon="⤳" ;;
         STOP)          sig_icon="□" ;;
         *)             sig_icon="·" ;;
       esac
@@ -1580,6 +1780,8 @@ case "$cmd" in
   info)       cmd_info ;;
   research)   cmd_research "$@" ;;
   punt)       cmd_punt "$@" ;;
+  spinoff)    cmd_spinoff "$@" ;;
+  spinoff-done) cmd_spinoff_done "$@" ;;
   resolve)    cmd_resolve "$@" ;;
   session)    cmd_session "$@" ;;
   file)       cmd_file ;;

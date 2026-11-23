@@ -358,6 +358,14 @@ The watcher handles CI monitoring — the librarian already told it to watch the
 
 When the librarian relays a `DONE` signal (post-merge verification complete), notify the user: `[start-project] APP-1001 verified in production — done.`
 
+### Spinoffs
+
+Any agent (or the user) can run `project spinoff` to put a throwaway worker on a scoped one-off fix. The script spawns the worker itself, and you get a one-line `SPINOFF — <from> spun off "<title>" to <name>` FYI. **Don't act on it.** Don't brief the worker, don't assign it, and don't count it against the wave cap.
+
+- A relayed `COMPLETE — PR #N for spinoff-<name>`: tell the user a PR needs review (`[start-project] spinoff "<title>" — PR #N opened`). Nothing else.
+- When it merges: tell the librarian as with any merge. Skip worktree cleanup, reuse evaluation and DAG checks. The librarian tells the worker, which closes its own tab, and `project cleanup` removes the worktree.
+- If the user asks you to "spin this off", run `project spinoff` yourself with a full brief (the format is in the worker skill § Spinning off a fix).
+
 ### DISTILL requests
 
 Any agent can send `DISTILL — <reason>` when its context is getting noisy and output quality is degrading. When you receive one, decide:

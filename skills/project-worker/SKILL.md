@@ -17,6 +17,21 @@ Two commands for agent communication:
 
 Your boot prompt tells you your role name (e.g. `alpha`, `bravo`). Other roles you can always reach: `orchestrator`, `librarian`, `researcher`. The orchestrator's assignment tells you about other workers when relevant.
 
+## Spinoff mode
+
+If your boot prompt says you're a **spinoff worker**, you were spawned by `project spinoff` to fix one scoped problem someone found and handed off. There is no ticket and no assignment message. Your brief file is the whole assignment. Follow the normal steps with these differences:
+
+- **Boot:** `cd .worktrees/<spinoff-id>/`, verify the branch, `project register <your-role>`, then read the brief file named in your boot prompt. Don't wait for an assignment. Start working.
+- **No tracker work:** skip STARTING and make no ticket transitions. Your PR references the project's epic key (title prefix and description). If the brief says to do something else (a specific ticket, no PR), follow the brief.
+- **Stay in scope:** fix exactly what the brief describes. If the fix turns out much bigger than the brief suggests, or the brief is wrong, don't expand it. `project punt` what you found and finish with `spinoff-done`.
+- **Questions:** don't go back to the requester. They handed this off so they wouldn't have to carry it. Ask the librarian or researcher like any worker.
+- **COMPLETE:** same as Step 9, to the librarian, using your spinoff ID as the ticket key (`COMPLETE — PR #N for spinoff-bravo`). Then wait. The watcher reports CI failures to you, and the librarian tells you when the PR merges.
+- **Finish:** your last command, once the PR has merged (or right away if nothing needed changing or you punted):
+  ```bash
+  project spinoff-done "<one-line outcome: PR #N merged / no-op: <why> / punted: <why>>"
+  ```
+  This notifies the requester if they asked for it, marks you stopped, and closes your tab. Leave the worktree alone. `project cleanup` removes it.
+
 ## Step 0: Boot into your worktree
 
 Your boot prompt told you which worktree directory. The orchestrator created it for you — workers never create or remove worktrees. Before anything else:
@@ -214,6 +229,27 @@ Use `project prompt <role> <message>` to message any agent directly — don't ju
 - **Blocked on a decision:** `project prompt orchestrator "BLOCKED — <reason>"` — it escalates to the user.
 - **CI is failing:** The watcher monitors your PRs and reports CI failures to you directly. Fix the issue, push, and the watcher will recheck. If the watcher hasn't reported a failure but you notice one, fix and push — the watcher will pick up the new status.
 - **Related work you discover:** Use judgment based on PR blast radius. A small fix that unblocks your ticket (adding a gem, fixing a broken helper) — just do it, mention it in the PR. A separate unit of work that would double the diff (moving controllers, refactoring a shared service) — `project prompt orchestrator "SCOPE — <explanation>"` and let it route the work to a follow-up ticket or another worker.
+- **A scoped problem outside your ticket that just needs fixing** (you know what's wrong and roughly where, and it isn't worth a ticket): spin it off instead of carrying it. See § Spinning off a fix.
+
+## Spinning off a fix
+
+`project spinoff` spawns a throwaway worker on a one-off fix. Use it when a problem is **already scoped**: you know what's wrong, roughly where, and what "fixed" looks like. If you only suspect something is wrong, `punt` it to the researcher instead.
+
+```bash
+project spinoff "<short title>" <<'EOF'
+Problem: <what's wrong>
+Why it matters: <the impact; this is what lets the worker judge edge cases>
+Evidence: <file:line, error, query result, row counts>
+Fix: <where it likely goes, approach if you know it>
+Don't touch: <adjacent things that look related but aren't in scope>
+Done when: <tests, verification, any manual step after merge>
+EOF
+```
+
+- The brief is all the spinoff worker gets, so write it as a complete handoff, not a pointer back to you. Include the *why*, not just the *what*.
+- It's fire-and-forget. Add `--notify` only if you're blocked until it lands, and you'll get one `SPINOFF_DONE` line at the end.
+- At most 2 run at once. If the command refuses, `punt` instead.
+- If the user says "spin this off", this is the command they mean.
 
 ## Logging feedback
 
@@ -275,4 +311,4 @@ Some work (data migrations, rake tasks, console testing) needs the primary check
 - Force-push
 - Create or remove worktrees — the orchestrator manages worktree lifecycle
 - Create plan documents without being asked
-- Spawn your own sub-agents — ask the orchestrator if you need help
+- Spawn your own sub-agents — ask the orchestrator if you need help (`project spinoff` for a scoped one-off fix is the one exception)

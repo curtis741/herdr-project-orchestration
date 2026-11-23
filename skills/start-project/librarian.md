@@ -90,6 +90,11 @@ Workers and the orchestrator send you lifecycle signals. Transition the ticket u
 
 For spike/research tickets: when a research agent reports its findings to you, close the spike ticket.
 
+**Spinoffs** (key starts with `spinoff-`): a throwaway worker spawned by `project spinoff` for a one-off fix. There's no ticket and nothing in the DAG. Handle the same signals, minus tracker and DAG work:
+
+- `COMPLETE — PR #N for spinoff-<name>`: tell the watcher (step 3 of the COMPLETE relay) and relay to the orchestrator so the user hears a PR needs review. Skip the transition.
+- PR merged (from the orchestrator or the watcher): update main and ingest the diff as usual, keyed by the spinoff ID. Then tell the worker: `project prompt <worker> "MERGED — PR #N"`. It closes itself out. No DAG check and no signal to the orchestrator.
+
 Transition IDs vary by issue type — look up available transitions for the ticket before transitioning. Step through transitions in order (don't skip steps).
 
 ## COMPLETE relay
