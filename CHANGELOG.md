@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0
 
 - **`project dump` / `project reset`** — new: wind a project down in one command. `dump` pauses: every other live agent is prompted in parallel (`DUMP — ...`) to write unreported state to `$(project dir)/<role>.final.md` or nothing, then is stopped (session preserved) and its pane closed. `reset` (orchestrator) does the same dump, writes a master-distill template to `orchestrator.reset.md`, and `reset --handoff` spawns a fresh orchestrator that boots from it. Run from outside, `reset` asks the orchestrator to do it. If you receive `DUMP —`, follow it and don't signal anyone.
 - **`project spinoff "<title>" [--notify]`** — new: put a throwaway worker on a scoped one-off fix. Any agent (or the user) can run it with a brief on stdin (Problem / Why it matters / Evidence / Fix / Don't touch / Done when). The CLI spawns the worker directly. No orchestrator approval, outside the wave cap, max 2 at once. The PR references the epic, with no ticket. It's fire-and-forget unless `--notify` is passed. Use it when you've scoped a fix; keep using `punt` when you only suspect a problem.

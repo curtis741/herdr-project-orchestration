@@ -1,6 +1,6 @@
 id = "herdr-plugins.project-orchestration"
 name = "Project Orchestration"
-version = "0.8.0"
+version = "0.9.0"
 min_herdr_version = "0.7.5"
 description = "Multi-agent project orchestration — coordinate workers, a librarian, a watcher, and a researcher across a group of tickets using the project CLI. Works with Jira, Linear, GitHub Issues, or any tracker."
 platforms = ["linux", "macos"]
