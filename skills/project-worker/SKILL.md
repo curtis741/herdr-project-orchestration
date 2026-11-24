@@ -134,7 +134,12 @@ git merge origin/main --no-edit
 Use GitHub MCP tools to open a draft PR:
 
 - Title: `[<ticket-key>] <summary>`
-- Body: describe what changed, why, and how to test
+- Body: describe what changed, why, and how to test. End with a footer line naming the project and your role, so the user can tell which worker opened it:
+  ```
+  ---
+  <project-name> - <role>
+  ```
+  `<project-name>` is `$HERDR_PROJECT` (e.g. `app-1234 - bravo`). Spinoffs and follow-up PRs get the same footer. If you take over another worker's PR, add your own footer line below theirs.
 - Always draft (`draft: true`)
 - Target: `main` — unless you merged another worker's branch into yours, then target that branch instead so the PR diff only shows your incremental changes
 
