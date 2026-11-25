@@ -102,6 +102,12 @@ Close the project's workspace. Writes `closed_at` first, which keeps the project
 
 Read-only snapshot of the project: agents and their status, recent signals, active blockers, and worktree state. Non-blocking — useful for checking in without interrupting agents.
 
+### `project update`
+
+Moves the install to the newest release now, instead of waiting for the app's daily check on start or `herdr plugin update`. Fetches release tags, moves the share clone (`~/.local/share/project-orchestration`) forward to the newest `v*` tag (never back), relinks, and sends running orchestrators the CHANGELOG entries since their version. With the app's mod installed, it runs the mod's `mod-setup.sh` so the panel's files are refreshed too (the app reloads them). Agents already running pick up the new CLI on their next call, and new skills when they're recycled.
+
+When a newer release exists, `project` prints `project: vX is out … run 'project update'` once a day, at a plain shell only; project agents don't see it.
+
 ## Global flags
 
 - `--project <name>` — override `$HERDR_PROJECT`

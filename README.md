@@ -54,6 +54,8 @@ bash ~/.local/share/project-orchestration/scripts/setup.sh
 cp -R ~/.local/share/project-orchestration/mods/project-orchestration ~/.config/herdr-app/mods/   # the panel; optional
 ```
 
+To upgrade right away from either one, run `project update`. It fetches the newest release and relinks; with the mod installed, it also refreshes the panel.
+
 Installing both is fine: whichever is newer wins, and an older install never rolls the clone back. Links that used to point at another checkout are reported and repointed.
 
 ### Run a project

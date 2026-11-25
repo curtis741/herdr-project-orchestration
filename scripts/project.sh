@@ -78,12 +78,26 @@ _update_check() {
   # Write today's date so concurrent invocations don't all spawn checks
   echo "$today" > "$marker"
 
-  # Background: backend compares the installed version with upstream
-  (be_update_check "$cache") &>/dev/null &
+  # Background: compare the share clone's version with the newest release tag upstream
+  (_newer_release > "$cache") &>/dev/null &
   disown
 }
 
-_update_check
+PROJECT_SHARE="${PROJECT_ORCH_SHARE:-$HOME/.local/share/project-orchestration}"
+_toml_version() { grep '^version' "$1/herdr-plugin.toml" 2>/dev/null | sed 's/.*"\(.*\)"/\1/'; }
+
+# Print "project: vX is out — run 'project update'" when origin has a newer release tag.
+_newer_release() {
+  local cur newest
+  cur="$(_toml_version "$PROJECT_SHARE")"
+  [[ -n "$cur" ]] || return 0
+  newest="$(git -C "$PROJECT_SHARE" ls-remote --tags --refs origin 'v[0-9]*' 2>/dev/null \
+    | sed 's|.*refs/tags/v||' | sort -V | tail -n1)"
+  [[ -n "$newest" && "$newest" != "$cur" ]] || return 0
+  [[ "$(printf '%s\n%s\n' "$cur" "$newest" | sort -V | tail -n1)" == "$newest" ]] || return 0
+  echo "project: v$newest is out (you have v$cur) — run 'project update'"
+}
+
 
 # NATO phonetic alphabet for worker names
 WORKER_NAMES=(alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu)
@@ -148,6 +162,8 @@ Commands:
   recover                          Diagnose project state after restart — show what's resumable
   check-in [--since <timestamp>]   Developer summary: what happened, what needs you
   observe                          Read-only snapshot: agents, signals, blockers, worktrees
+  update                           Move the install to the newest release now: fetch, relink, refresh the
+                                   app panel's files, tell running orchestrators what changed
 
 Project name is auto-detected from $HERDR_PROJECT, falling back to the state
 file that claims this pane/workspace (e.g. sessions resumed after a reboot).
@@ -2539,6 +2555,40 @@ cmd_cleanup() {
   echo "$kept_count active, $orphan_count orphan$(if $dry_run; then echo ' (dry run — nothing removed)'; fi)"
 }
 
+# Bring the share clone forward to the newest release tag, now (the app does this at most
+# daily on start; the plugin on `herdr plugin update`). With the app's mod installed, its
+# mod-setup.sh does the work so the panel's files are refreshed too (the app hot-reloads them).
+cmd_update() {
+  [[ -e "$PROJECT_SHARE/.git" ]] || { echo "error: no install at $PROJECT_SHARE — install the plugin or the mod first" >&2; exit 1; }
+  local before mod="" f
+  before="$(_toml_version "$PROJECT_SHARE")"
+  for f in "$HOME"/.config/herdr-app/mods/*/mod-setup.sh; do
+    [[ -f "$f" ]] && grep -q 'project-orchestration mod-setup' "$f" || continue
+    git -C "$(dirname "$f")" rev-parse --is-inside-work-tree >/dev/null 2>&1 && continue   # dev copy
+    mod="$f"; break
+  done
+  if [[ -n "$mod" ]]; then
+    rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/herdr-plugins.project-orchestration/.last-fetch"
+    bash "$mod" | sed '$d'
+  else
+    git -C "$PROJECT_SHARE" fetch --quiet --tags origin || { echo "error: fetch failed (offline?)" >&2; exit 1; }
+    local tag head tagc
+    tag="$(git -C "$PROJECT_SHARE" tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+    if [[ -n "$tag" ]]; then
+      head="$(git -C "$PROJECT_SHARE" rev-parse HEAD)"
+      tagc="$(git -C "$PROJECT_SHARE" rev-parse "refs/tags/$tag^{commit}")"
+      if [[ "$head" != "$tagc" ]] && git -C "$PROJECT_SHARE" merge-base --is-ancestor "$head" "$tagc"; then
+        git -C "$PROJECT_SHARE" checkout --quiet --detach "$tag"
+      fi
+    fi
+    bash "$PROJECT_SHARE/scripts/setup.sh"
+  fi
+  local after
+  after="$(_toml_version "$PROJECT_SHARE")"
+  if [[ "$before" == "$after" ]]; then echo "project: up to date (v$after)"; else echo "project: updated v$before → v$after"; fi
+  rm -f "$PROJECTS_DIR/.update-check-result"
+}
+
 # Parse global flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -2565,6 +2615,9 @@ if [[ -z "${HERDR_PROJECT:-}" ]]; then
   [[ -n "$_recovered" ]] || _recovered="$(_project_from_state_files)"
   [[ -n "$_recovered" ]] && export HERDR_PROJECT="$_recovered"
 fi
+
+# Release notice for the person at a shell, not for project agents (they'd act on it mid-project).
+[[ -n "${HERDR_PROJECT:-}" ]] || _update_check
 
 cmd="${1:-}"
 shift || true
@@ -2608,5 +2661,6 @@ case "$cmd" in
   recover)    cmd_recover "$@" ;;
   check-in)   cmd_checkin "$@" ;;
   observe)    cmd_observe ;;
+  update)     cmd_update ;;
   *)          usage ;;
 esac

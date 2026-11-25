@@ -40,7 +40,6 @@
 #   be_tab_of <pane>                               tab id containing the pane (empty if gone)
 #   be_tab_close <tab>
 #   be_tab_rename <tab> <label>
-#   be_update_check <result-file>                  background: write a message to the file if an update exists
 
 be_available() {
   command -v herdr &>/dev/null
@@ -291,23 +290,6 @@ be_tab_rename() {
 
 # Background-safe: compare the installed plugin SHA with the remote HEAD and, if
 # they differ, write a one-line message to the result file. Silent on any failure.
-be_update_check() {
-  local cache="$1" plugin_info entry installed_sha repo_ref owner repo remote_sha
-  plugin_info=$(herdr plugin list 2>/dev/null) || return 0
-  entry=$(echo "$plugin_info" | grep 'project-orchestration' | grep 'github:') || return 0
-  installed_sha=$(echo "$entry" | grep -oE '@[0-9a-f]+' | tr -d '@') || return 0
-  repo_ref=$(echo "$entry" | grep -oE 'github:[^@]+' | sed 's/github://') || return 0
-  owner="${repo_ref%%/*}"
-  repo="${repo_ref#*/}"
-
-  remote_sha=$(git ls-remote "https://github.com/$owner/$repo.git" HEAD 2>/dev/null \
-    | awk '{print $1}') || return 0
-
-  if [[ -n "$remote_sha" && -n "$installed_sha" && "$remote_sha" != "$installed_sha" ]]; then
-    echo "project: plugin update available — run 'herdr plugin update' to get the latest" > "$cache"
-  fi
-}
-
 # Entry point for the deliverer: bash herdr.sh --deliver <pane> <queue dir>
 if [[ "${BASH_SOURCE[0]}" == "$0" && "${1:-}" == "--deliver" ]]; then
   set +e

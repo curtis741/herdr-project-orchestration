@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+- **The researcher asks you directly.** On an ambiguity or decision the code can't settle, it asks with AskUserQuestion in its own pane, at the moment it hits it. It no longer hands decisions to the orchestrator to relay. It tells the orchestrator only when the answer changes tickets or dependencies, or when its question goes unanswered.
+
 ## 0.12.0
 
 - **`project recycle <role> [--timeout SECS]`** gives an agent fresh context in one command. It asks the agent to write its distill file, waits (bounded), then spawns the successor as a takeover with the original label, title and cwd. The successor reads the distill file and retires its predecessor. A blocked or stuck agent is left running and the command exits 1. It refuses hosted, unassigned and stopped roles, and the caller's own role. When approving a `DISTILL` request, the orchestrator now runs this instead of the manual ACK / READY / takeover sequence (the manual flow still works).

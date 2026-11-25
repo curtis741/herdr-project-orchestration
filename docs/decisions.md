@@ -41,6 +41,8 @@ Key decisions with reasoning, open questions, and the feedback log from real epi
 
 Findings from real epic runs that have been worked into skills or DESIGN.md.
 
+- **Researcher relayed decisions through the orchestrator** → `start-project/researcher.md`: "ask the user when reachable" never said what reachable meant, so a researcher defaulted to flagging the orchestrator. It now asks the user in its own pane at the moment it hits the decision, and tells the orchestrator only when the answer changes tickets or dependencies, or when the question has gone unanswered.
+
 - **Scope creep judgment call** → `project-worker/SKILL.md`: small fixes that unblock the ticket, just do it; separate units of work, signal SCOPE.
 - **Back-channel to orchestrator** → `project-worker/SKILL.md` + `start-project/SKILL.md`: workers message orchestrator directly via `herdr agent prompt`, orchestrator name included in worker prompt.
 - **Worktree cleanup after merge** → `start-project/SKILL.md` Step 5: remove worktree after merge unless sequential chain continues.

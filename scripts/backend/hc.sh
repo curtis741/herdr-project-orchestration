@@ -418,10 +418,6 @@ be_self_project() {
 }
 
 # The mod's init() owns install and upgrade; there is no plugin SHA to compare.
-be_update_check() {
-  return 0
-}
-
 # Entry point for the deliverer terminal: bash hc.sh --deliver <pane> <queue dir>
 if [[ "${BASH_SOURCE[0]}" == "$0" && "${1:-}" == "--deliver" ]]; then
   set +e
