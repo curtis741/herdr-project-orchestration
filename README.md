@@ -16,6 +16,8 @@ Focused agents, each with its own context window:
 
 The result is consistent quality from the first ticket to the last. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.).
 
+It runs on either Herdr: as a **plugin** for classic Herdr (the `herdr` CLI), or as a **mod** for the Herdr app, which adds a Projects panel. Install one or both; see [Install](#install).
+
 ## How you use it
 
 ### Prerequisites
@@ -37,7 +39,13 @@ herdr plugin install curtis741/herdr-project-orchestration
 
 The build step brings the clone forward to this plugin's version (never backwards) and links everything. `herdr plugin update` upgrades it.
 
-**Herdr app (mod):** ask the app to add `https://github.com/curtis741/herdr-project-orchestration` (it reads `RECIPE.md`, which lists what the mod does up front). On each app start the mod moves the clone to the newest release tag (checking at most once a day) and relinks. Without the add flow:
+**Herdr app (mod):** paste this into an agent in the app:
+
+```
+Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/curtis741/herdr-project-orchestration/tree/main/mods/project-orchestration
+```
+
+The agent reads `RECIPE.md` first, which lists up front what the mod installs, and asks you before it adds anything. On each app start the mod moves the clone to the newest release tag (checking at most once a day) and relinks. Without the add flow:
 
 ```bash
 git clone https://github.com/curtis741/herdr-project-orchestration ~/.local/share/project-orchestration
