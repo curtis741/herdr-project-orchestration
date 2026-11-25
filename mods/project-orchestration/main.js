@@ -1,10 +1,10 @@
 // Project orchestration: a live roster of each project's agents (from the project=/role=
 // labels the hc backend puts on every terminal, plus the project state file for tickets),
-// a Start dialog, a Dump button, and install/upgrade of the CLI + skills (mod-setup.sh → the share clone). All actions go through the `project` CLI; nothing here
-// re-implements it. One mod, two views: the panel, and (props.view === "start") the dialog.
+// a Start dialog, Dump / Spinoff buttons per project, a Recycle button per agent, and install/upgrade of the CLI + skills (mod-setup.sh → the share clone). All actions go through the `project` CLI; nothing here
+// re-implements it. One mod, three views: the panel, and (props.view === "start" | "spinoff") the dialogs.
 
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import * as fs from "fs/promises";
 import { exec, home, appHome, checking, terminals, agents, run, theme, props, notify,
          readTextFile, openOverlay, closeOverlay, pickFolder, focused } from "herdr";
@@ -89,10 +89,13 @@ export default class ProjectOrchestration extends View {
   init(_props, cx) {
     this.handle = cx.focus_handle();
     if (props()?.view === "start") return this.initStart(cx);
+    if (props()?.view === "spinoff") return this.initSpinoff(cx);
     this.files = {};
     this.loading = new Set();
     this.confirm = null; // project awaiting "dump?" confirmation
     this.busy = new Set(); // projects with a dump running
+    this.recycleConfirm = null; // "<project>\u0000<role>" awaiting "recycle?" confirmation
+    this.recycling = new Set(); // same keys, recycle running
     this.names = []; // every project that has a state file (for the Paused section)
     this.collapsed = this.loadCollapsed(); // per viewer: localStorage, survives restarts
     this.setupErr = null; // set when the share clone is missing or setup failed: {msg, cmd}
@@ -190,6 +193,106 @@ export default class ProjectOrchestration extends View {
     });
   }
 
+  recycle(project, role, cx) {
+    const key = `${project}\u0000${role}`;
+    this.recycleConfirm = null;
+    this.recycling.add(key);
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("env", ["PROJECT_BACKEND=hc", PROJECT_BIN(), "--project", project, "recycle", role], { timeout: 600000 });
+        notify({ title: `${project}: recycle ${role} ${r.code === 0 ? "done" : "incomplete"}`,
+          body: tail(r.code === 0 ? r.stdout : r.stderr || r.stdout), level: r.code === 0 ? "success" : "warning" });
+      } catch (e) {
+        notify({ title: `${project}: recycle ${role} failed`, body: String(e.message ?? e), level: "error" });
+      }
+      this.recycling.delete(key);
+      cx.notify();
+    });
+  }
+
+  // The folder a spinoff defaults to: where the project's orchestrator was spawned.
+  repoOf(project) {
+    return this.files[project]?.agents?.orchestrator?.spawn?.cwd || focused()?.cwd || home();
+  }
+
+  // --- spinoff dialog ----------------------------------------------------------------
+  initSpinoff(cx) {
+    const p = props();
+    this.project = p.project;
+    this.title = ""; this.folder = p.folder || home();
+    this.err = ""; this.starting = false; this.focusIn = "title";
+    this.titleIn = InputState.new({ placeholder: "short title, e.g. fix flaky retry test" });
+    this.briefIn = TextareaState.new({ placeholder: "Problem / Why it matters / Evidence / Fix / Don't touch / Done when", rows: 9 });
+    this.titleIn.on("change", (_e, cx) => { this.title = this.titleIn.value(); cx.notify(); });
+    this.titleIn.on("focus", (_e, cx) => { this.focusIn = "title"; cx.notify(); });
+    this.briefIn.on("focus", (_e, cx) => { this.focusIn = "brief"; cx.notify(); });
+    this.titleIn.focus();
+    cx.timer.after(600, () => this.titleIn.focus());
+  }
+
+  // exec has no stdin option: the brief goes to a temp file and bash redirects it in.
+  submitSpinoff(cx) {
+    const title = this.title.trim();
+    const brief = this.briefIn.value();
+    if (this.starting) return;
+    if (!title) { this.err = "Give it a title"; cx.notify(); return; }
+    if (!brief.trim()) { this.err = "The brief is the worker's whole assignment: write it"; cx.notify(); return; }
+    this.starting = true; this.err = ""; cx.notify();
+    const dir = `${home()}/.herdr/tmp`;
+    const file = `${dir}/spinoff-brief-${Date.now()}.md`;
+    cx.spawn(async (cx) => {
+      try {
+        await fs.mkdir(dir, { recursive: true });
+        await fs.writeFile(file, brief);
+        const r = await exec("env", ["PROJECT_BACKEND=hc", "bash", "-c",
+          'exec "$0" --project "$1" spinoff "$2" --repo "$3" < "$4"', PROJECT_BIN(), this.project, title, this.folder, file],
+          { timeout: 180000 });
+        if (r.code !== 0) throw new Error(tail(r.stderr || r.stdout));
+        closeOverlay(props().overlay);
+        notify({ title: `${this.project}: spun off "${title}"`, body: tail(r.stdout), level: "success" });
+      } catch (e) {
+        this.err = String(e.message ?? e);
+        this.starting = false;
+        cx.notify();
+      }
+      try { await fs.unlink(file); } catch {}
+    });
+  }
+
+  renderSpinoff() {
+    const t = theme();
+    const p = props();
+    const label = (s) => div().pt(14).pb(6).text_size(11.5).text_color(t.dim).child(s);
+    const box = (name) => this.focusIn === name ? t.accent : t.input;
+    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+      .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
+      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
+      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+    return v_flex().id("po-spinoff").track_focus(this.handle)
+      .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
+      .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child(`Spin off a fix · ${this.project}`))
+        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+      .child(label("Title"))
+      .child(Input.new(this.titleIn).h(36).px(10).rounded(9).border_1().border_color(box("title"))
+        .bg(t.background).text_size(12.8).text_color(t.foreground))
+      .child(label("Brief (the worker's whole assignment)"))
+      .child(Textarea.new(this.briefIn).px(10).py(8).rounded(9).border_1().border_color(box("brief"))
+        .bg(t.background).text_size(12.3).text_color(t.foreground))
+      .child(label("Repo folder"))
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_1().truncate().text_size(12).text_color(t.muted).child(this.folder))
+        .child(button("po-sp-pick", "Choose…", false, (_e, cx) => {
+          cx.spawn(async (cx) => { const f = await pickFolder({ prompt: "Use" }); if (f) this.folder = f; cx.notify(); });
+        })))
+      .when(Boolean(this.err), (el) => el.child(div().pt(10).text_size(11.5).text_color(t.blocked).child(this.err)))
+      .child(h_flex().pt(20).gap(8).justify_end()
+        .child(button("po-sp-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
+        .child(button("po-sp-go", this.starting ? "Spinning off…" : "Spin off", true, (_e, cx) => this.submitSpinoff(cx))));
+  }
+
   // --- start dialog ------------------------------------------------------------------
   initStart(cx) {
     this.key = ""; this.label = ""; this.folder = focused()?.cwd ?? home();
@@ -264,6 +367,7 @@ export default class ProjectOrchestration extends View {
   // --- panel -------------------------------------------------------------------------
   render(cx) {
     if (props()?.view === "start") return this.renderStart();
+    if (props()?.view === "spinoff") return this.renderSpinoff();
     const t = theme();
     const list = roster(this.files);
     for (const [p] of list) if (!(p in this.files)) { this.files[p] = null; this.load(p, cx); }
@@ -276,13 +380,25 @@ export default class ProjectOrchestration extends View {
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(action).child(text);
 
     const row = (p, r) => {
+      const key = `${p}\u0000${r.role}`;
+      const recycling = this.recycling.has(key);
+      const confirming = this.recycleConfirm === key;
       const dot = div().w(8).h(8).rounded(4).flex_none().bg(color[r.status] ?? t.dim);
       const el = h_flex().id(`po-${p}-${r.role}-${r.terminal ?? "x"}`).gap(8).items_center().px(12).py(4)
         .when(Boolean(r.terminal), (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => focusTerminal(r.terminal)))
         .child(r.status === "working" ? dot.loop("opacity", { from: 0.35, to: 1, period: 1200 }) : dot)
         .child(div().flex_1().truncate().text_size(12.5).text_color(r.terminal ? t.foreground : t.muted).child(r.role))
         .when(Boolean(r.ticket), (e) => e.child(div().text_size(11).text_color(t.dim).child(r.ticket)))
-        .child(div().w(62).text_size(11).text_color(color[r.status] ?? t.dim).child(r.status));
+        .child(div().w(62).text_size(11).text_color(color[r.status] ?? t.dim).child(r.status))
+        .when(Boolean(r.terminal) && !recycling && !confirming, (e) =>
+          e.child(mini(`po-rc-${p}-${r.role}`, "Recycle", t.muted, (_e, cx) => {
+            cx.stop_propagation(); this.recycleConfirm = key; cx.notify();
+          })))
+        .when(recycling, (e) => e.child(div().text_size(11).text_color(t.dim).child("recycling…")))
+        .when(confirming, (e) => e
+          .child(div().text_size(11).text_color(t.blocked).child("recycle?"))
+          .child(mini(`po-rc-yes-${p}-${r.role}`, "Yes", t.blocked, (_e, cx) => { cx.stop_propagation(); this.recycle(p, r.role, cx); }))
+          .child(mini(`po-rc-no-${p}-${r.role}`, "No", t.muted, (_e, cx) => { cx.stop_propagation(); this.recycleConfirm = null; cx.notify(); })));
       return el;
     };
 
@@ -296,6 +412,8 @@ export default class ProjectOrchestration extends View {
           .child(div().id(`po-name-${p}`).flex_1().truncate().text_size(12).font_semibold().text_color(t.foreground)
             .when(Boolean(entry.workspace), (e) => e.cursor_pointer().on_click(() => run("space.select", { id: entry.workspace })))
             .child(`${p} (${entry.rows.length})`))
+          .child(mini(`po-spin-${p}`, "Spinoff", t.muted, () =>
+            openOverlay({ mod: MOD, props: { view: "spinoff", project: p, folder: this.repoOf(p) }, kind: "dialog", width: 460, height: 470 })))
           .when(this.busy.has(p), (e) => e.child(div().text_size(11).text_color(t.dim).child("dumping…")))
           .when(!this.busy.has(p) && !confirming, (e) =>
             e.child(mini(`po-dump-${p}`, "Dump", t.muted, () => { this.confirm = p; cx.notify(); })))
