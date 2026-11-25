@@ -1,6 +1,6 @@
 # Project size and role hosting
 
-Status: idea, not built. Started 2026-11-24.
+Status: CLI built 2026-11-25 (`project host` / `promote`, hosted registry entries); skills not updated yet. Started 2026-11-24.
 
 ## The idea
 
@@ -16,7 +16,7 @@ Every event is sent **once**, to **one role**. Never the same information to sev
 
 ## Default: the orchestrator hosts everything
 
-*Decided 2026-11-25.* Every project starts with the orchestrator hosting librarian, researcher and watcher. A role gets its own agent only when it's promoted. So a role always resolves to someone, and senders never need a fallback. Planned CLI:
+*Decided 2026-11-25.* Every project starts with the orchestrator hosting librarian, researcher and watcher. A role gets its own agent only when it's promoted. So a role always resolves to someone, and senders never need a fallback. CLI (built):
 - **`project host <role>`:** the calling agent takes a role. The registry points the role at the caller's terminal, marked as hosted. `project init` / `start` do this for the orchestrator automatically.
 - **`project promote <role> --task …`:** the host writes a handoff for that role. Then spawn a dedicated agent seeded from it and point the role at the new agent. The host's terminal is never closed (unlike `--takeover` + `retire`).
 - **A message carries its role** (`[librarian] DONE …`) so a host knows which role's rules apply.
@@ -53,14 +53,21 @@ Promoting a role:
 
 The reverse could happen too: a retiring role goes back to the orchestrator.
 
-## Routing details to settle
+## Routing details
 
-- **Registry shape.** Today the registry maps role → pane. Hosting adds role → host agent. Several roles can point at one pane. Each role's entry keeps its own history (sessions, handoffs) even while it's hosted.
-- **Hosts know their roles.** There's no routing to yourself. A host is told which roles it holds when it takes them on, so it never signals itself: "I don't need to message the librarian, I am the librarian." The role's handoff to itself becomes an internal step. Workers only ever host one role. Plausible combinations are the orchestrator hosting librarian and watcher, or researcher and librarian together (both answer questions about the codebase).
-- **Which role a message is for.** A message from another agent to a host carries the role it was sent to (for example `[librarian] COMPLETE alpha APP-1234`), so the host knows which role's rules apply.
-- **Role instructions.** A host loads a role's definition (for example `librarian.md`) only when it takes that role on, not upfront.
-- **Stopping.** Stopping a hosted role moves it, or retires it. It never closes the host's pane.
-- **Herdr app backend.** Labels can carry hosting (`role=orchestrator,librarian`), so the roster can still come from `hc ls`. See [dual-mode.md](dual-mode.md).
+Settled and built in `scripts/project.sh` (2026-11-25):
+
+- **Registry shape. Settled.** A hosted role's entry is `{pane_id: <host's terminal>, hosted_by: <host role>, hosted_at}`. Several roles share one terminal. The entry keeps its own history keys (`session_id`, `previous_sessions`) while hosted, so a later `promote --resume` can use them. Nothing hosted ever stores the host's session.
+- **Callers.** `resolve_caller` picks the entry for the caller's terminal that is *not* hosted, so the signal log's sender is always the real agent's role (`orchestrator`, never `librarian`).
+- **Defaults.** `project register orchestrator` (what `start` and a hand-started orchestrator both run) makes the orchestrator host librarian, researcher and watcher, except roles with their own live agent or hosted by someone else. Stopped or missing entries become hosted. `project init` alone only creates the empty registry: it can't know which pane will be the orchestrator (`start` runs it from the user's shell).
+- **Hosts follow their terminal.** When the host re-registers on a new terminal (takeover), roles it hosts move with it; the old terminal can then be retired.
+- **Which role a message is for. Settled.** A message to a hosted role is prefixed `[to <role>] ` (before `FROM(<sender>):`) by `prompt`, `ask`, `research`, `punt` and spinoff-done. Roles that are the agent's own get no prefix.
+- **Hosts know their roles. Settled, in the CLI.** `project host <role>` tells the host what it now holds. A host that messages a role it hosts is refused (`error: you host 'librarian' yourself …`, nothing sent), so a misrouted signal fails loudly instead of landing in its own input. The role's skill text (what to do instead of messaging) is not written yet.
+- **Stopping. Settled.** `project stop <role>` on a hosted role un-hosts it: marked stopped, `hosted_by` removed, host untouched (`--close` is ignored). Stopping a host also marks every role it hosts stopped. `dump` and `reset --handoff` ignore hosted roles (the host answers for them).
+- **Promotion. Settled.** `project promote <role> --task-file PATH` (or `--task`, or `--resume`) is a spawn of the hosted role. `project spawn <role>` on any hosted role does the same, so start-project's existing `project spawn librarian` keeps working. The host is never stopped, closed or made a `--takeover` predecessor.
+- **Lifecycle markers.** `dump` writes `paused_at` (cleared by any register or spawn), `close` writes `closed_at`. The mod's Paused list shows state files with `paused_at`, no `closed_at`, in an app space (`sp…` ids).
+- **Role instructions.** A host loads a role's definition (for example `librarian.md`) only when it takes that role on, not upfront. *Still to do in the skills.*
+- **Herdr app backend. Not needed so far.** Hosting lives in the registry; labels were not touched. The mod's panel reads `project=`/`role=` labels only, so a hosted role shows no row of its own (the host's row shows). Decide later whether the roster should list hosted roles.
 
 ## Open questions
 

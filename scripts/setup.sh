@@ -84,6 +84,25 @@ fi
 # Guide symlink
 link "$PLUGIN_DIR/GUIDE.md" "$HOME/.claude/skills/PROJECT_GUIDE.md" "~/.claude/skills/PROJECT_GUIDE.md"
 
+# Stale links: symlinks an older version of this install created that point into a herdr
+# plugin checkout (or another previous project-orchestration location), outside the share
+# clone, and that no current version links (e.g. dry-run-project, project-librarian).
+# Only symlinks, only in the two folders we link into, only with those target paths.
+for dir in "$HOME/.claude/skills" "$HOME/.local/bin"; do
+  [[ -d "$dir" ]] || continue
+  for stale in "$dir"/* "$dir"/.[!.]*; do
+    [[ -L "$stale" ]] || continue
+    cur="$(readlink "$stale")"
+    case "$cur" in "$SHARE_REAL"/*|"$SHARE"/*) continue ;; esac
+    case "$cur" in
+      */herdr/plugins/*project-orchestration*|*herdr-plugins.project-orchestration*|*/.herdr/plugins/*project-orchestration*) ;;
+      *) continue ;;
+    esac
+    rm -f "$stale"
+    echo "✗ Removed stale link $stale → $cur (no longer installed)"
+  done
+done
+
 # PATH check
 if ! echo "$PATH" | tr ':' '\n' | grep -qx "$HOME/.local/bin"; then
   echo ""
@@ -121,6 +140,22 @@ WELCOME
 elif [[ "$old_version" != "$new_version" ]]; then
   echo "✓ Upgraded v$old_version → v$new_version"
 
+  # CHANGELOG bullets for versions after the old one, up to the new one: just the bullets,
+  # under a "vX:" line per version.
+  changes=""
+  if [[ -f "$PLUGIN_DIR/CHANGELOG.md" ]]; then
+    changes=$(awk -v old="$old_version" -v new="$new_version" '
+      function gt(a, b,   i, n, x, y) {  # a > b as dotted versions
+        n = split(a, x, "."); split(b, y, ".")
+        for (i = 1; i <= n; i++) { if (x[i] + 0 > y[i] + 0) return 1; if (x[i] + 0 < y[i] + 0) return 0 }
+        return 0
+      }
+      /^## / { v = $2; show = (gt(v, old) && !gt(v, new)); if (show) print "v" v ":"; next }
+      show && /^- / { print }
+    ' "$PLUGIN_DIR/CHANGELOG.md")
+  fi
+  [[ -n "$changes" ]] || changes="(no CHANGELOG entries found for this range)"
+
   # Notify running orchestrators (through the project CLI — no direct herdr calls)
   if [[ -d "$PROJECTS_DIR" ]]; then
     for state_file in "$PROJECTS_DIR"/*.json; do
@@ -133,7 +168,9 @@ elif [[ "$old_version" != "$new_version" ]]; then
       case "$orch_status" in ""|stopped|unreachable|unknown) continue ;; esac
 
       "$PLUGIN_DIR/scripts/project.sh" --project "$project_name" prompt orchestrator \
-        "PLUGIN UPGRADE — project-orchestration v$old_version → v$new_version. Reload /start-project and tell your agents to reload their skills (/project-worker, /project-librarian)." \
+        "PLUGIN UPGRADE — project-orchestration v$old_version → v$new_version. Changes since v$old_version:
+$changes
+Summarize what matters to the user in a few lines. Don't message other agents: the user decides whether any should be recycled (new skills load on recycle)." \
         >/dev/null 2>&1 && \
         echo "✓ Notified orchestrator for $project_name" || true
     done

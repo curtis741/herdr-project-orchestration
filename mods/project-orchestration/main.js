@@ -5,6 +5,7 @@
 
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import * as fs from "fs/promises";
 import { exec, home, appHome, checking, terminals, agents, run, theme, props, notify,
          readTextFile, openOverlay, closeOverlay, pickFolder, focused } from "herdr";
 
@@ -34,6 +35,13 @@ for d in "$1"/*/; do
 done
 [ "$found" = 1 ] || echo "nofolder"
 `;
+
+const PAUSED = "\u0000paused";
+// Paused = `project dump` wrote paused_at (cleared when an agent registers or spawns again), `project close`
+// didn't write closed_at, and the project lives in an app space (ids "sp…"; classic workspaces are "w…"
+// and aren't this panel's business). Projects with a live terminal are listed as running instead.
+const isPaused = (st) => Boolean(st && st.paused_at && !st.closed_at
+  && typeof st.workspace_id === "string" && st.workspace_id.startsWith("sp"));
 
 const stateOf = (s) => (s === "error" ? "blocked" : s || "idle");
 
@@ -78,8 +86,11 @@ export default class ProjectOrchestration extends View {
     this.loading = new Set();
     this.confirm = null; // project awaiting "dump?" confirmation
     this.busy = new Set(); // projects with a dump running
+    this.names = []; // every project that has a state file (for the Paused section)
+    this.collapsed = this.loadCollapsed(); // per viewer: localStorage, survives restarts
     this.setupErr = null; // set when the share clone is missing or setup failed: {msg, cmd}
-    cx.timer.every(10000, (cx) => this.reload(cx));
+    this.scan(cx);
+    cx.timer.every(10000, (cx) => { this.scan(cx); this.reload(cx); });
     if (!checking()) this.install(cx);
   }
 
@@ -111,6 +122,29 @@ export default class ProjectOrchestration extends View {
       } catch (e) {
         fail(String(e.message ?? e));
       }
+    });
+  }
+
+  // Collapsed state, per viewer. Running projects are open unless listed; "Paused" is closed
+  // unless listed under "paused-open". Stored as { "<project>": true|false, "\u0000paused": ... }.
+  loadCollapsed() {
+    try { return JSON.parse(localStorage.getItem("po-collapsed") ?? "{}") ?? {}; } catch { return {}; }
+  }
+  isCollapsed(key) { return key in this.collapsed ? this.collapsed[key] : key === PAUSED; }
+  toggle(key, cx) {
+    this.collapsed[key] = !this.isCollapsed(key);
+    try { localStorage.setItem("po-collapsed", JSON.stringify(this.collapsed)); } catch {}
+    cx.notify();
+  }
+
+  // Names of all project state files, so projects without a live terminal can be listed as paused.
+  scan(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const names = (await fs.readdir(`${home()}/.herdr/projects`))
+          .filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5));
+        if (names.join() !== this.names.join()) { this.names = names; cx.notify(); }
+      } catch { /* no projects folder yet */ }
     });
   }
 
@@ -225,6 +259,10 @@ export default class ProjectOrchestration extends View {
     const t = theme();
     const list = roster(this.files);
     for (const [p] of list) if (!(p in this.files)) { this.files[p] = null; this.load(p, cx); }
+    const live = new Set(list.map(([p]) => p));
+    const paused = this.names.filter((n) => !live.has(n));
+    for (const n of paused) if (!(n in this.files)) { this.files[n] = null; this.load(n, cx); }
+    const pausedList = paused.filter((n) => isPaused(this.files[n]));
     const color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.idle };
     const mini = (id, text, fg, action) => div().id(id).px(6).py(2).rounded(5).text_size(11).text_color(fg)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(action).child(text);
@@ -242,11 +280,14 @@ export default class ProjectOrchestration extends View {
 
     const section = ([p, entry]) => {
       const confirming = this.confirm === p;
+      const open = !this.isCollapsed(p);
       return v_flex().id(`po-proj-${p}`).pb(8)
         .child(h_flex().items_center().px(12).py(6).gap(4)
+          .child(div().id(`po-tog-${p}`).w(14).text_size(11).text_color(t.dim).cursor_pointer()
+            .on_click((_e, cx) => this.toggle(p, cx)).child(open ? "▾" : "▸"))
           .child(div().id(`po-name-${p}`).flex_1().truncate().text_size(12).font_semibold().text_color(t.foreground)
             .when(Boolean(entry.workspace), (e) => e.cursor_pointer().on_click(() => run("space.select", { id: entry.workspace })))
-            .child(p))
+            .child(`${p} (${entry.rows.length})`))
           .when(this.busy.has(p), (e) => e.child(div().text_size(11).text_color(t.dim).child("dumping…")))
           .when(!this.busy.has(p) && !confirming, (e) =>
             e.child(mini(`po-dump-${p}`, "Dump", t.muted, () => { this.confirm = p; cx.notify(); })))
@@ -254,7 +295,22 @@ export default class ProjectOrchestration extends View {
             .child(div().text_size(11).text_color(t.blocked).child("stop all agents?"))
             .child(mini(`po-dump-yes-${p}`, "Yes", t.blocked, (_e, cx) => this.dump(p, cx)))
             .child(mini(`po-dump-no-${p}`, "No", t.muted, () => { this.confirm = null; cx.notify(); }))))
-        .children(entry.rows.map((r) => row(p, r)));
+        .when(open, (e) => e.children(entry.rows.map((r) => row(p, r))));
+    };
+
+    const pausedSection = () => {
+      const open = !this.isCollapsed(PAUSED);
+      return v_flex().id("po-paused").pb(8)
+        .child(h_flex().id("po-paused-head").items_center().px(12).py(6).gap(4).cursor_pointer()
+          .on_click((_e, cx) => this.toggle(PAUSED, cx))
+          .child(div().w(14).text_size(11).text_color(t.dim).child(open ? "▾" : "▸"))
+          .child(div().flex_1().text_size(12).font_semibold().text_color(t.dim).child(`Paused (${pausedList.length})`)))
+        .when(open, (e) => e.children(pausedList.map((n) => {
+          const ws = this.files[n]?.workspace_id;
+          return div().id(`po-paused-${n}`).px(12).py(4).pl(26).truncate().text_size(12).text_color(t.dim)
+            .when(Boolean(ws), (x) => x.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => run("space.select", { id: ws })))
+            .child(`${n} (${Object.keys(this.files[n].agents ?? {}).length})`);
+        })));
     };
 
     return v_flex().id("po-root").size_full().bg(t.surface).text_color(t.foreground)
@@ -269,6 +325,7 @@ export default class ProjectOrchestration extends View {
       .child(v_flex().flex_1().overflow_y_scrollbar()
         .when(list.length === 0, (e) => e.child(div().px(12).py(6).text_size(12).text_color(t.dim)
           .child("No running projects. + Start, or: project start <epic-key> \"<label>\"")))
-        .children(list.map(section)));
+        .children(list.map(section))
+        .when(pausedList.length > 0, (e) => e.child(pausedSection())));
   }
 }

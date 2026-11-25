@@ -30,6 +30,13 @@ FAKE-001 → FAKE-002
 
 ## Step 1: Create the test workspace and init the project
 
+Start clean: remove any leftover state file and signal log from an earlier run (`project open` would overwrite the state file but keep the old log, so `project log` would mix runs). The signal log sits beside the state file:
+
+```bash
+f="$(project --project DRY-RUN file)"
+rm -f "$f" "${f%.json}.signals.log"
+```
+
 Open the project (creates the test workspace, initializes the project, and prints the `HERDR_PROJECT` export), then register yourself:
 
 ```bash
@@ -61,6 +68,8 @@ Signals you'll receive:
     project prompt orchestrator 'COMPLETE — PR #1 for FAKE-001.'
   PR #1 merged for FAKE-001  →  respond: [librarian] ACK MERGED — FAKE-001 transitioned to Done. Then check the DAG: FAKE-002 is now unblocked. Message the orchestrator:
     project prompt orchestrator 'UNBLOCKED — FAKE-002 is now unblocked (blocker FAKE-001 merged). Ready for a worker.'
+  PR #2 merged for FAKE-002  →  respond: [librarian] ACK MERGED — FAKE-002 transitioned to Done. Then check the DAG: no tickets remain. Message the orchestrator with exactly:
+    project prompt orchestrator 'DAG COMPLETE — all tickets done.'
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
 Do NOT load /project-librarian. Just follow the signal protocol above.
@@ -130,8 +139,8 @@ When worker-a messages you `READY — FAKE-001`, send the assignment:
 project prompt fake-001 "Your assignment:
 
 Ticket: FAKE-001
-Summary: Add status column to transactions table
-Description: This is a dry run. Don't write any code. Just follow the signal protocol from your boot prompt (steps 3-7)." --wait --timeout 120000
+Summary: Add status column to orders table
+Description: This is a dry run. Don't write any code. Just follow the signal protocol from your boot prompt (steps 3-6)." --wait --timeout 120000
 ```
 
 ## Step 5: Watch the signal cascade
@@ -139,11 +148,11 @@ Description: This is a dry run. Don't write any code. Just follow the signal pro
 After sending the assignment, the expected sequence is:
 
 1. **fake-001 → librarian:** `STARTING — FAKE-001`
-2. **librarian → you:** `[librarian] ACK STARTING — FAKE-001 transitioned to In Progress`
+2. **librarian (own pane):** `[librarian] ACK STARTING — FAKE-001 transitioned to In Progress` (the ACK appears in the librarian's pane, not sent to you; check with `project read librarian`)
 3. **fake-001 → librarian:** `COMPLETE — PR #1 for FAKE-001`
 4. **librarian → watcher:** `WATCH — PR #1 for FAKE-001, report failures to fake-001`
 5. **librarian → you:** `COMPLETE — PR #1 for FAKE-001.` (librarian relay)
-6. **librarian → you:** `[librarian] ACK COMPLETE — FAKE-001 transitioned to In Code Review`
+6. **librarian (own pane):** `[librarian] ACK COMPLETE — FAKE-001 transitioned to In Code Review`
 
 Verify with:
 
@@ -205,7 +214,7 @@ Send the assignment when READY arrives, then watch the same signal cascade as St
 project prompt librarian "PR #2 merged for FAKE-002" --wait --timeout 60000
 ```
 
-The librarian should ACK, find no more unblocked tickets, and report the DAG is complete.
+The librarian should ACK, find no more unblocked tickets, and send you an explicit `DAG COMPLETE` line (its boot prompt asks for it). Score "DAG complete detection" PASS only if that line arrives; if it doesn't, check `project read librarian --lines 40` and `project log`.
 
 ## Step 9: Score the run
 

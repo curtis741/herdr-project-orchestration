@@ -21,6 +21,7 @@ if git -C "$PLUGIN_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   head_commit="$(git -C "$PLUGIN_DIR" rev-parse HEAD 2>/dev/null || true)"
 fi
 
+fresh=0
 if [[ ! -e "$SHARE/.git" ]]; then
   if [[ -e "$SHARE" ]] && [[ -n "$(ls -A "$SHARE" 2>/dev/null)" ]]; then
     echo "plugin-setup: $SHARE exists and is not a git clone; move it aside and re-run." >&2
@@ -29,27 +30,44 @@ if [[ ! -e "$SHARE/.git" ]]; then
   mkdir -p "$(dirname "$SHARE")"
   echo "Cloning $REPO → $SHARE"
   git clone --quiet "$REPO" "$SHARE"
-  cur=""
+  fresh=1
 else
-  cur="$(toml_version "$SHARE")"
+  git -C "$SHARE" fetch --quiet --tags origin || echo "plugin-setup: fetch failed (offline?) — using the clone as it is" >&2
 fi
 
-if [[ -n "$cur" ]] && ver_ge "$cur" "$want"; then
-  echo "✓ Share clone at v$cur (plugin checkout is v$want) — not moving it"
-else
-  echo "Moving share clone ${cur:+v$cur }→ v$want"
-  git -C "$SHARE" fetch --quiet --tags origin
-  if git -C "$SHARE" rev-parse -q --verify "refs/tags/v$want^{commit}" >/dev/null; then
-    git -C "$SHARE" checkout --quiet --detach "v$want"
-  elif [[ -n "$head_commit" ]] && git -C "$SHARE" cat-file -e "$head_commit^{commit}" 2>/dev/null; then
-    echo "  (tag v$want not published; using this checkout's commit ${head_commit:0:9})"
-    git -C "$SHARE" checkout --quiet --detach "$head_commit"
+# A fresh clone starts on the default branch; pin it to the newest release tag.
+if (( fresh )); then
+  newest="$(git -C "$SHARE" tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+  [[ -z "$newest" ]] || git -C "$SHARE" checkout --quiet --detach "$newest"
+fi
+
+# Target: this plugin version's tag, else this checkout's commit.
+target=""; desc=""
+if git -C "$SHARE" rev-parse -q --verify "refs/tags/v$want^{commit}" >/dev/null; then
+  target="$(git -C "$SHARE" rev-parse "refs/tags/v$want^{commit}")"; desc="v$want"
+elif [[ -n "$head_commit" ]] && git -C "$SHARE" cat-file -e "$head_commit^{commit}" 2>/dev/null; then
+  target="$head_commit"; desc="this checkout's commit ${head_commit:0:9} (tag v$want not published)"
+fi
+
+cur="$(toml_version "$SHARE")"
+if [[ -z "$target" ]]; then
+  # Nothing to move to; fine only if the clone is already at least this version.
+  if [[ -n "$cur" ]] && ver_ge "$cur" "$want"; then
+    echo "✓ Share clone at v$cur (plugin checkout is v$want) — not moving it"
   else
     echo "plugin-setup: neither tag v$want nor this checkout's commit exists in $REPO." >&2
     exit 1
   fi
-  now="$(toml_version "$SHARE")"
-  ver_ge "$now" "$want" || { echo "plugin-setup: clone is at v$now after checkout, expected v$want" >&2; exit 1; }
+else
+  clone_head="$(git -C "$SHARE" rev-parse HEAD)"
+  if [[ "$clone_head" == "$target" ]] || git -C "$SHARE" merge-base --is-ancestor "$target" "$clone_head"; then
+    echo "✓ Share clone at ${cur:+v$cur }(already at or past $desc) — not moving it"
+  elif git -C "$SHARE" merge-base --is-ancestor "$clone_head" "$target"; then
+    echo "Moving share clone ${cur:+v$cur }→ $desc"
+    git -C "$SHARE" checkout --quiet --detach "$target"
+  else
+    echo "✓ Share clone has diverged from $desc — not moving it"
+  fi
 fi
 
 exec bash "$SHARE/scripts/setup.sh"

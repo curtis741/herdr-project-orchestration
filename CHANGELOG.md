@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.10.1
+
+- **Role hosting.** The orchestrator hosts librarian, researcher and watcher until a role gets its own agent. `project host <role>` takes a role, and `project promote <role> --task …` moves it to a dedicated agent without closing the host. `project spawn` on a hosted role promotes it. A message delivered to a host starts with `[to <role>]`, so you know which role's rules apply. Senders don't change: always signal the role.
+- **Upgrade notice carries the CHANGELOG.** On upgrade the orchestrator gets the new entries. Summarize them for the user and don't message other agents; the user decides whether to recycle any.
+- **Quieter CLI output.** `project prompt --wait` prints nothing on success. `project read` skips blank padding and the input box, so `--lines N` returns real content. UNBLOCKED, WATCH, PROJECT_COMPLETE and the DISTILL replies get their own types in the signal log.
+- **`project open`** refuses a name whose workspace is still open.
+- **Projects panel** docks on the left. Projects are collapsible with an agent count, and paused projects (after `dump`) appear in their own section.
+- **Install** pins a fresh clone to the newest release tag and removes stale links left by older installs.
+- **Guided tour** starts small (workers only, the orchestrator hosts the rest), then offers to scale up and promotes the librarian and researcher live.
+
 ## 0.10.0
 
 - **Runs on the Herdr app as well as classic Herdr.** The `project` CLI chooses its transport from the environment: `hc` in a Herdr app terminal, classic `herdr` otherwise (`PROJECT_BACKEND=hc|herdr` overrides). Skills and signals are the same on both.

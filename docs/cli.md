@@ -14,7 +14,15 @@ Register this agent and signal READY to the orchestrator. Pane ID and session ID
 
 ### `project stop <role>`
 
-Stop an agent. Marks it as stopped in the state file but preserves its session ID, pane ID, and ticket history for later resume.
+Stop an agent. Marks it as stopped in the state file but preserves its session ID, pane ID, and ticket history for later resume. On a hosted role it only un-hosts the role (the host is never stopped or closed); stopping a host also stops the roles it hosts.
+
+### `project host <role>`
+
+The calling agent takes on a role. The registry points the role at the caller's terminal, marked `hosted by <caller>`. Messages for the role arrive prefixed `[to <role>] `. Refused if the role has its own live agent or the caller is not registered. The orchestrator does this automatically for librarian, researcher and watcher when it runs `project register orchestrator`.
+
+### `project promote <role> [spawn options] (--task … | --task-file PATH | --resume)`
+
+Give a hosted role its own agent: a `project spawn` seeded from the handoff the host wrote. The role's entry now points at the new agent; the host is never stopped or closed. Same options as `spawn`. `project spawn <role>` on a hosted role behaves the same.
 
 ### `project next-worker`
 
@@ -42,11 +50,11 @@ Ask a domain question routed to the researcher agent. Async — the answer comes
 
 ### `project roster`
 
-Print the current role-to-pane-ID map.
+Print the current role-to-pane-ID map. Hosted roles show the host's pane and `hosted by <host>`.
 
 ### `project status`
 
-Show agent states (idle, working, blocked) for all registered roles.
+Show agent states (idle, working, blocked) for all registered roles. A hosted role shows its host's state and `hosted by <host>`.
 
 ### `project info`
 
@@ -76,6 +84,14 @@ Print the signal log. Default: last 50 entries.
 
 Log an orchestrator decision (wave transition, spawn, etc.).
 
+### `project dump [--timeout SECS]`
+
+Pause the project: every other live agent writes unreported state to `<role>.final.md`, then is stopped and its pane closed. Hosted roles are skipped (their host answers for them). Writes `paused_at` to the state file; any later `register` or `spawn` clears it. The mod's Paused list reads it.
+
+### `project close`
+
+Close the project's workspace. Writes `closed_at` first, which keeps the project out of the mod's Paused list.
+
 ### `project observe`
 
 Read-only snapshot of the project: agents and their status, recent signals, active blockers, and worktree state. Non-blocking — useful for checking in without interrupting agents.
@@ -87,6 +103,6 @@ Read-only snapshot of the project: agents and their status, recent signals, acti
 
 ## Message routing
 
-Messages sent with `project prompt` are automatically prefixed with `FROM(<sender>):` so every agent knows who's talking. Messages without a prefix came from a human.
+Messages sent with `project prompt` are automatically prefixed with `FROM(<sender>):` so every agent knows who's talking. Messages without a prefix came from a human. A message for a role the receiver only *hosts* starts with `[to <role>] `, so the host knows which role's rules apply. An agent that messages a role it hosts itself is refused: it is that role.
 
 When an agent messages a stopped agent, the CLI auto-escalates to the orchestrator with a `NEED` signal — the orchestrator decides whether to bring it back.

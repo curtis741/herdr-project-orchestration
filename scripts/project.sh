@@ -102,9 +102,13 @@ Commands:
   spawn <role> [--cwd DIR] [--label TEXT] [--title TEXT] [--resume] [--takeover]
         [--task TEXT | --task-file PATH | --task -] [--wait [--timeout MS]]
                                    Open a tab, start an agent with its first task, register the role
+  host <role>                      Take on a role yourself (registry points it at your terminal)
+  promote <role> [spawn options] --task-file PATH
+                                   Give a hosted role its own agent; the host is never stopped
   rename <role> <label>            Rename a role's tab
   register <role>                   Register this agent and signal READY to orchestrator
-  stop <role> [--close]            Stop an agent (preserves session ID); --close also closes its pane
+  stop <role> [--close]            Stop an agent (preserves session ID); --close also closes its pane.
+                                   A hosted role is just un-hosted; the host is never stopped or closed
   next-worker                      Print the next unused worker name (NATO alphabet, then alpha2...)
   assign <role> <ticket-key>       Track a ticket assignment to a worker
   prompt <role> <message>          Send a message (fire-and-forget)
@@ -244,14 +248,60 @@ read_session() {
   jq -r ".agents.\"$role\".session_id // empty" "$f"
 }
 
+# The caller's own role: the entry registered to its terminal that is not merely
+# hosted there (a host's terminal also appears under every role it hosts). A live
+# entry wins over a stopped one that still points at the same terminal.
 resolve_caller() {
   local f="$1"
   local me
   me="$(be_self)"
   if [[ -n "$me" ]]; then
     jq -r --arg pane "$me" \
-      '.agents | to_entries[] | select(.value.pane_id == $pane) | .key' "$f" 2>/dev/null || true
+      '[.agents | to_entries[] | select(.value.pane_id == $pane and (.value.hosted_by // "") == "")]
+       | sort_by(.value.stopped == true) | .[0].key // empty' "$f" 2>/dev/null || true
   fi
+}
+
+# Who hosts <role> ("" if it has its own agent or is unregistered).
+read_host() {
+  jq -r --arg r "$1" '.agents[$r].hosted_by // empty' "$2"
+}
+
+# "[to <role>] " when <role> is hosted (the receiving agent must know which role's
+# rules apply to this message); empty when the role is the receiver's own.
+to_prefix() {
+  local f="$1" role="$2"
+  [[ -n "$(read_host "$role" "$f")" ]] && printf '[to %s] ' "$role"
+  return 0
+}
+
+# Refuse to message a role the caller itself hosts: nothing to route, it is the role.
+refuse_self_hosted() {
+  local f="$1" role="$2" pane="$3" me
+  me="$(be_self)"
+  if [[ -n "$me" && "$pane" == "$me" ]] && [[ -n "$(read_host "$role" "$f")" ]]; then
+    echo "error: you host '$role' yourself — handle it directly, nothing was sent" >&2
+    return 1
+  fi
+  return 0
+}
+
+HOSTABLE_ROLES=(librarian researcher watcher)
+
+# Make <host> (at <pane>) host every default role that has no live agent of its own.
+# Roles already hosted by <host> follow it to <pane>. Roles with their own live agent,
+# or hosted by someone else, are left alone. History keys (session ids etc.) stay.
+_host_defaults() {
+  local f="$1" host="$2" pane="$3" r tmp
+  for r in "${HOSTABLE_ROLES[@]}"; do
+    tmp="${f}.tmp.$$"
+    jq --arg r "$r" --arg host "$host" --arg pane "$pane" \
+      '(.agents[$r] // {}) as $e
+       | if ($e == {}) or ($e.stopped == true) or (($e.hosted_by // "") == $host)
+         then .agents[$r] = ($e | del(.stopped, .stopped_at, .predecessor_pane))
+                            + {pane_id: $pane, hosted_by: $host, hosted_at: ($e.hosted_at // (now | todate))}
+         else . end' "$f" > "$tmp" && mv "$tmp" "$f"
+  done
 }
 
 cmd_init() {
@@ -345,10 +395,20 @@ cmd_register() {
      | if ($old.session_id // "") != "" and $old.session_id != $sid
        then .agents[$role].previous_sessions = (($old.previous_sessions // []) | if index($old.session_id) then . else . + [$old.session_id] end)
        else . end
-     | if ($old.pane_id // "") != "" and $old.pane_id != $pane and ($old.stopped != true)
+     | if ($old.pane_id // "") != "" and $old.pane_id != $pane and ($old.stopped != true) and (($old.hosted_by // "") == "")
        then .agents[$role].predecessor_pane = $old.pane_id else . end
-     | del(.agents[$role].stopped) | del(.agents[$role].stopped_at)' \
+     | del(.agents[$role].stopped) | del(.agents[$role].stopped_at)
+     | del(.agents[$role].hosted_by) | del(.agents[$role].hosted_at)
+     | del(.paused_at)
+     # roles this agent hosts follow it when it moves to a new terminal (takeover)
+     | if ($old.pane_id // "") != "" and $old.pane_id != $pane
+       then .agents |= with_entries(if (.value.hosted_by // "") == $role and .value.pane_id == $old.pane_id
+                                    then .value.pane_id = $pane else . end)
+       else . end' \
     "$f" > "$tmp" && mv "$tmp" "$f"
+
+  # The orchestrator hosts the support roles that have no agent of their own
+  [[ "$role" == "orchestrator" ]] && _host_defaults "$f" orchestrator "$pane_id"
 
   # Signal the orchestrator that this agent is ready (unless we ARE the orchestrator)
   local is_spinoff
@@ -418,14 +478,31 @@ cmd_stop() {
     exit 1
   fi
 
+  # A hosted role has no agent of its own: stopping it un-hosts it. The host's
+  # terminal is never closed and its session is not the role's session.
+  local host tmp
+  host="$(read_host "$role" "$f")"
+  tmp="${f}.tmp.$$"
+  if [[ -n "$host" ]]; then
+    jq --arg role "$role" \
+      '.agents[$role] |= (del(.hosted_by, .hosted_at) + {stopped: true, stopped_at: (now | todate)})' \
+      "$f" > "$tmp" && mv "$tmp" "$f"
+    log_signal "orchestrator" "$role" "STOP" "$role un-hosted (was hosted by $host)"
+    echo "stopped: $role (was hosted by $host; the host keeps running)"
+    return 0
+  fi
+
   # Capture session ID before stopping (it may not be in the state file yet)
   local sid
   sid="$(be_session "$pane")"
 
-  local tmp="${f}.tmp.$$"
   jq --arg role "$role" --arg sid "$sid" \
     '.agents[$role].stopped = true | if $sid != "" then .agents[$role].session_id = $sid else . end | .agents[$role].stopped_at = (now | todate)
-     | del(.agents[$role].spinoff)' \
+     | del(.agents[$role].spinoff)
+     # roles this agent hosted lose their host with it
+     | .agents |= with_entries(if (.value.hosted_by // "") == $role
+                               then .value |= (del(.hosted_by, .hosted_at) + {stopped: true, stopped_at: (now | todate)})
+                               else . end)' \
     "$f" > "$tmp" && mv "$tmp" "$f"
   log_signal "orchestrator" "$role" "STOP" "$role stopped"
   if $close; then
@@ -528,7 +605,15 @@ cmd_prompt() {
     DISTILL_READY\ *)         signal_type="DISTILL_READY" ;;
     MERGED\ *)                signal_type="MERGED" ;;
     RESET\ *)                 signal_type="RESET" ;;
+    UNBLOCKED\ *|UNBLOCKED)   signal_type="UNBLOCKED" ;;
+    WATCH\ *)                 signal_type="WATCH" ;;
+    PROJECT_COMPLETE\ *|PROJECT_COMPLETE) signal_type="PROJECT_COMPLETE" ;;
+    DISTILL_DEFER\ *|DISTILL_DEFER) signal_type="DISTILL_DEFER" ;;
+    DISTILL_ACK\ *|DISTILL_ACK) signal_type="DISTILL_ACK" ;;
+    CORRECTION\ *)            signal_type="CORRECTION" ;;
   esac
+
+  refuse_self_hosted "$f" "$role" "$pane" || exit 1
 
   log_signal "${caller:-unknown}" "$role" "$signal_type" "$message"
 
@@ -536,9 +621,58 @@ cmd_prompt() {
   if [[ -n "$caller" ]]; then
     message="FROM($caller): $message"
   fi
+  # A host is told which of its roles this is for
+  message="$(to_prefix "$f" "$role")$message"
 
+  # With --wait the backend prints its raw JSON result: noise in an agent's
+  # context. Swallow it on success; keep error text and the exit code.
+  if [[ -n "$wait_flag" ]]; then
+    local wait_out wait_rc=0
+    # shellcheck disable=SC2086
+    wait_out=$(be_prompt "$pane" "$message" $wait_flag $timeout_flag 2>&1) || wait_rc=$?
+    if [[ $wait_rc -ne 0 ]]; then
+      [[ -n "$wait_out" ]] && echo "$wait_out"
+      return $wait_rc
+    fi
+    return 0
+  fi
   # shellcheck disable=SC2086
   be_prompt "$pane" "$message" $wait_flag $timeout_flag
+}
+
+# Read the last N lines of real content from a pane. Fresh agent screens are
+# mostly blank padding plus input-box chrome, so a plain N-line read can return
+# nothing useful. Over-fetch, drop trailing blank/chrome lines, keep the last N.
+read_trimmed() {
+  local pane="$1" n="$2" fetch raw out
+  [[ "$n" =~ ^[0-9]+$ ]] || n=40
+  for fetch in "$n" $((n * 2 + 60)) $((n * 4 + 200)); do
+    raw="$(be_read "$pane" "$fetch")" || true
+    out="$(printf '%s\n' "$raw" | awk '
+      { l[NR] = $0 }
+      END {
+        e = NR
+        while (e > 0) {
+          t = l[e]
+          # blank, box-drawing borders, or a bare prompt marker; no letters/digits
+          chrome = (t !~ /[A-Za-z0-9]/) && (t ~ /^[ \t]*$/ || t ~ /^[ \t>|]*$/ ||
+                    index(t, "─") || index(t, "━") || index(t, "═") || index(t, "│") ||
+                    index(t, "╭") || index(t, "╰") || index(t, "❯"))
+          # Claude Code footer: "↳ … | 11% ctx | …" status line, "⏵⏵ auto mode on (shift+tab to cycle)"
+          footer = (t ~ /[0-9]+% ctx/) || index(t, "⏵⏵") || (t ~ /shift\+tab to cycle/) ||
+                   (t ~ /^[ \t]*↳/ && index(t, "|"))
+          if (chrome || footer || t ~ /\? for shortcuts|esc to interrupt|bypass permissions|accept edits on/) { e--; continue }
+          break
+        }
+        for (i = 1; i <= e; i++) print l[i]
+      }')"
+    # enough real content, or the screen is exhausted (fetch returned less than asked)
+    if [[ "$(printf '%s\n' "$out" | grep -c .)" -ge "$n" ]] || [[ "$(printf '%s\n' "$raw" | wc -l)" -lt "$fetch" ]]; then
+      break
+    fi
+  done
+  [[ -n "$out" ]] && printf '%s\n' "$out" | tail -n "$n"
+  return 0
 }
 
 cmd_ask() {
@@ -601,11 +735,14 @@ cmd_ask() {
     exit 1
   fi
 
+  refuse_self_hosted "$f" "$role" "$pane" || exit 1
+
   log_signal "${caller:-unknown}" "$role" "ASK" "$message"
 
   if [[ -n "$caller" ]]; then
     message="FROM($caller): $message"
   fi
+  message="$(to_prefix "$f" "$role")$message"
 
   # Send the prompt and wait for the agent to finish
   local prompt_result
@@ -618,7 +755,7 @@ cmd_ask() {
   fi
 
   # Read the agent's response from its pane output (raw text, not JSON)
-  be_read "$pane" "$lines"
+  read_trimmed "$pane" "$lines"
 }
 
 cmd_read() {
@@ -646,7 +783,7 @@ cmd_read() {
     exit 1
   fi
 
-  be_read "$pane" "$lines"
+  read_trimmed "$pane" "$lines"
 }
 
 cmd_roster() {
@@ -662,6 +799,7 @@ cmd_roster() {
     "  \(.key)\t\(.value.pane_id)\t\(.value.session_id // "-")\t\(
       [
         (if .value.stopped then "stopped" else null end),
+        (if (.value.hosted_by // "") != "" then "hosted by \(.value.hosted_by)" else null end),
         (.value.current_ticket // null)
       ] | map(select(. != null)) | join(", ") | if . == "" then "-" else . end
     )"' "$f" | column -t -s $'\t'
@@ -709,6 +847,9 @@ cmd_status() {
       .agents[$role] | select(.tickets) |
       (.current_ticket // "") as $cur |
       [.tickets[] | if . == $cur then . else . + " ✓" end] | join(", ")' "$f" 2>/dev/null || true)
+    local hosted_note
+    hosted_note="$(read_host "$role" "$f")"
+    [[ -n "$hosted_note" ]] && ticket_info="hosted by $hosted_note${ticket_info:+, $ticket_info}"
     if [[ -n "$ticket_info" ]]; then
       printf "  %-12s %-10s %-10s %s\n" "$role" "$pane" "$status" "$ticket_info"
     else
@@ -773,11 +914,14 @@ cmd_research() {
   routed="$(_research_target "$f")" || exit 1
   read -r target target_pane <<<"$routed"
 
+  refuse_self_hosted "$f" "$target" "$target_pane" || exit 1
+
   local prefix="" callback=""
   if [[ -n "$my_role" ]]; then
     prefix="FROM($my_role): "
     callback=" Reply with: project prompt $my_role '<your answer>'"
   fi
+  prefix="$(to_prefix "$f" "$target")$prefix"
 
   be_prompt "$target_pane" "${prefix}RESEARCH — $question${callback}" >/dev/null
   log_signal "${my_role:-unknown}" "$target" "RESEARCH" "$question"
@@ -800,8 +944,10 @@ cmd_punt() {
   routed="$(_research_target "$f")" || exit 1
   read -r target target_pane <<<"$routed"
 
+  refuse_self_hosted "$f" "$target" "$target_pane" || exit 1
+
   local from="${my_role:-an agent}"
-  be_prompt "$target_pane" "FROM($from): PUNT — $problem
+  be_prompt "$target_pane" "$(to_prefix "$f" "$target")FROM($from): PUNT — $problem
 You own this — $from is not waiting on an answer. Investigate, decide what should happen, and act (create a ticket, flag the orchestrator, or ask the user). Only message $from if the outcome changes their current ticket, and then in one line." >/dev/null
   log_signal "$from" "$target" "PUNT" "$problem"
   echo "punted to $target — it owns this now; you'll only hear back if it affects your ticket"
@@ -966,7 +1112,7 @@ cmd_spinoff_done() {
     from_pane="$(read_pane "$f" "$from")"
     from_stopped=$(jq -r --arg r "$from" '.agents[$r].stopped // false' "$f")
     if [[ -n "$from_pane" && "$from_stopped" != "true" ]]; then
-      be_prompt "$from_pane" "FROM($me): SPINOFF_DONE — \"$title\": $outcome" >/dev/null 2>&1 || true
+      be_prompt "$from_pane" "$(to_prefix "$f" "$from")FROM($me): SPINOFF_DONE — \"$title\": $outcome" >/dev/null 2>&1 || true
     fi
   fi
   log_signal "$me" "${from}" "SPINOFF_DONE" "$title: $outcome"
@@ -1104,6 +1250,9 @@ cmd_recover() {
 
     if [[ "$is_stopped" == "true" ]]; then
       state_label="stopped"
+      pane_ok="-"
+    elif [[ -n "$(read_host "$role" "$f")" ]]; then
+      state_label="hosted by $(read_host "$role" "$f")"
       pane_ok="-"
     else
       # Check if the pane is still reachable
@@ -1253,7 +1402,12 @@ cmd_checkin() {
     is_stopped=$(jq -r --arg role "$role" '.agents[$role].stopped // false' "$f")
     local ticket
     ticket=$(jq -r --arg role "$role" '.agents[$role].current_ticket // "-"' "$f")
-    local status
+    local status host_of
+    host_of="$(read_host "$role" "$f")"
+    if [[ -n "$host_of" ]]; then
+      printf "  %-16s %-12s hosted by %s\n" "$role" "[hosted]" "$host_of"
+      continue
+    fi
     if [[ "$is_stopped" == "true" ]]; then
       status="stopped"
     else
@@ -1433,6 +1587,8 @@ cmd_observe() {
 
     if [[ "$is_stopped" == "true" ]]; then
       status="stopped"
+    elif [[ -n "$(read_host "$role" "$f")" ]]; then
+      status="hosted"
     else
       status=$(be_state "$pane"); status="${status:-unreachable}"
     fi
@@ -1456,6 +1612,7 @@ cmd_observe() {
       working)     icon="●" ;;
       idle|done)   icon="○" ;;
       stopped)     icon="□" ;;
+      hosted)      icon="◦" ;;
       unreachable) icon="✗" ;;
       *)           icon="?" ;;
     esac
@@ -1667,7 +1824,7 @@ _dump_agents() {
   while IFS=$'\t' read -r role pane; do
     [[ -z "$role" || "$pane" == "$self_pane" ]] && continue
     targets+=("$role")
-  done < <(jq -r '.agents | to_entries[] | select(.value.stopped != true) | [.key, .value.pane_id // ""] | @tsv' "$f")
+  done < <(jq -r '.agents | to_entries[] | select(.value.stopped != true and (.value.hosted_by // "") == "") | [.key, .value.pane_id // ""] | @tsv' "$f")
 
   if [[ ${#targets[@]} -eq 0 ]]; then
     echo "no live agents to dump"
@@ -1750,6 +1907,9 @@ cmd_dump() {
   caller="$(resolve_caller "$f")"
   local rc=0
   _dump_agents "pausing" "$timeout" || rc=1
+  # Lifecycle marker for the mod's Paused list; any agent registering or spawning again clears it
+  local tmp="${f}.tmp.$$"
+  jq '.paused_at = (now | todate)' "$f" > "$tmp" && mv "$tmp" "$f"
   echo ""
   if [[ $rc -ne 0 ]]; then
     echo "some agents were left running — re-run 'project dump' once they're idle"
@@ -1861,7 +2021,7 @@ _reset_handoff() {
     exit 1
   fi
   local live
-  live=$(jq -r '[.agents | to_entries[] | select(.key != "orchestrator" and .value.stopped != true) | .key] | join(" ")' "$f")
+  live=$(jq -r '[.agents | to_entries[] | select(.key != "orchestrator" and .value.stopped != true and (.value.hosted_by // "") == "") | .key] | join(" ")' "$f")
   if [[ -n "$live" ]]; then
     echo "error: agents still live: $live — run 'project reset' again to dump and stop them" >&2
     exit 1
@@ -1913,7 +2073,7 @@ cmd_retire() {
     exit 1
   fi
   local owner
-  owner=$(jq -r --arg p "$old_pane" '.agents | to_entries[] | select(.value.pane_id == $p) | .key' "$f")
+  owner=$(jq -r --arg p "$old_pane" '.agents | to_entries[] | select(.value.pane_id == $p and (.value.hosted_by // "") == "" and .value.stopped != true) | .key' "$f")
   if [[ -n "$owner" ]]; then
     echo "error: $old_pane is still registered to '$owner' — register the new agent first" >&2
     exit 1
@@ -1950,6 +2110,14 @@ cmd_open() {
     echo "usage: project open <project-name> [--label TEXT] [--focus]" >&2
     exit 1
   fi
+  local existing="$PROJECTS_DIR/$name.json" old_ws
+  if [[ -f "$existing" ]]; then
+    old_ws="$(read_field "$existing" "workspace_id")"
+    if [[ -n "$old_ws" ]] && be_workspace_exists "$old_ws"; then
+      echo "error: project '$name' already exists and its workspace ($old_ws) is still open — use a different name, or 'project close' it first" >&2
+      exit 1
+    fi
+  fi
   local ws_id _pane
   read -r ws_id _pane < <(be_workspace_create "$PWD" "${label:-$name}" "$name" "$focus") || exit 1
   cmd_init "$name" "$ws_id"
@@ -1964,7 +2132,14 @@ cmd_close() {
     echo "error: project has no workspace_id" >&2
     exit 1
   fi
-  be_workspace_close "$ws"
+  # Lifecycle marker (written first: closing the workspace may end this very session)
+  local tmp="${f}.tmp.$$"
+  jq '.closed_at = (now | todate)' "$f" > "$tmp" && mv "$tmp" "$f"
+  be_workspace_close "$ws" || {
+    tmp="${f}.tmp.$$"
+    jq 'del(.closed_at)' "$f" > "$tmp" && mv "$tmp" "$f"
+    exit 1
+  }
   echo "workspace closed: $(read_field "$f" "project")"
 }
 
@@ -2041,9 +2216,13 @@ cmd_spawn() {
     exit 1
   fi
 
-  local old_pane
+  # A hosted role has no agent of its own to replace: spawning for it is a promotion.
+  # The host keeps its terminal; there is no predecessor to take over from or retire.
+  local old_pane hosted_by
+  hosted_by="$(read_host "$role" "$f")"
+  [[ -n "$hosted_by" ]] && takeover=false
   old_pane="$(read_pane "$f" "$role")"
-  if [[ -n "$old_pane" ]] && [[ "$(jq -r --arg r "$role" '.agents[$r].stopped // false' "$f")" != "true" ]]       && ! $takeover && [[ -n "$(be_state "$old_pane")" ]]; then
+  if [[ -z "$hosted_by" && -n "$old_pane" ]] && [[ "$(jq -r --arg r "$role" '.agents[$r].stopped // false' "$f")" != "true" ]] && ! $takeover && [[ -n "$(be_state "$old_pane")" ]]; then
     echo "error: role '$role' is live in an existing pane — 'project stop $role --close' first, or pass --takeover" >&2
     exit 1
   fi
@@ -2062,12 +2241,15 @@ cmd_spawn() {
   # immediately and its first signal has a sender. A takeover leaves routing on the old
   # agent until the successor registers itself. On hc <tab> is empty here; patched below.
   _pre_spawn() {
-    if ! $takeover; then
-      local tmp="${f}.tmp.$$"
-      jq --arg role "$role" --arg pane "$1" --arg tab "$2" \
-        '.agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at, .predecessor_pane))
-           + {pane_id: $pane, tab_id: $tab, spawned_at: (now | todate)}' \
-        "$f" > "$tmp" && mv "$tmp" "$f"
+    local tmp="${f}.tmp.$$"
+    jq --arg role "$role" --arg pane "$1" --arg tab "$2" --argjson tk "$takeover" \
+      '(if $tk then .
+        else .agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at, .predecessor_pane, .hosted_by, .hosted_at))
+               + {pane_id: $pane, tab_id: $tab, spawned_at: (now | todate)} end)
+       | del(.paused_at)' \
+      "$f" > "$tmp" && mv "$tmp" "$f"
+    if [[ -n "$hosted_by" ]]; then
+      log_signal "$hosted_by" "$role" "PROMOTE" "$role$($resume && echo ' (resume)') — was hosted by $hosted_by"
     fi
     log_signal "orchestrator" "$role" "SPAWN" "$role$($resume && echo ' (resume)')"
   }
@@ -2081,7 +2263,76 @@ cmd_spawn() {
   fi
 
   [[ "$SPAWN_RC" -eq 0 ]] || exit "$SPAWN_RC"
-  echo "spawned: $role"
+  if [[ -n "$hosted_by" ]]; then
+    echo "spawned: $role (promoted — was hosted by $hosted_by, which keeps running)"
+  else
+    echo "spawned: $role"
+  fi
+}
+
+# The caller takes on a role: the registry points <role> at the caller's terminal,
+# marked hosted. Messages for it arrive prefixed '[to <role>] '.
+cmd_host() {
+  local role="${1:-}"
+  if [[ -z "$role" ]]; then
+    echo "usage: project host <role>" >&2
+    exit 1
+  fi
+  local f caller pane
+  f="$(ensure_state)"
+  pane="$(be_self)"
+  caller="$(resolve_caller "$f")"
+  if [[ -z "$caller" || -z "$pane" ]]; then
+    echo "error: only a registered agent can host a role — run 'project register <role>' first" >&2
+    exit 1
+  fi
+  if [[ "$role" == "$caller" ]]; then
+    echo "error: you are '$role' — can't host your own role" >&2
+    exit 1
+  fi
+  local e_pane e_stopped e_host
+  e_pane="$(read_pane "$f" "$role")"
+  e_stopped="$(jq -r --arg r "$role" '.agents[$r].stopped // false' "$f")"
+  e_host="$(read_host "$role" "$f")"
+  if [[ -n "$e_pane" && "$e_stopped" != "true" && -z "$e_host" ]]; then
+    echo "error: role '$role' has its own agent ($e_pane) — 'project stop $role --close' first" >&2
+    exit 1
+  fi
+  local tmp="${f}.tmp.$$"
+  jq --arg r "$role" --arg host "$caller" --arg pane "$pane" \
+    '.agents[$r] = ((.agents[$r] // {}) | del(.stopped, .stopped_at, .predecessor_pane))
+       + {pane_id: $pane, hosted_by: $host, hosted_at: (now | todate)}' \
+    "$f" > "$tmp" && mv "$tmp" "$f"
+  log_signal "$caller" "$role" "HOST" "$caller hosts $role"
+  echo "hosted: $role by $caller — messages for it arrive prefixed '[to $role] '; don't message the role, you are it"
+}
+
+# Give a hosted role its own agent. A spawn that is seeded from a handoff the host
+# wrote (--task / --task-file), or resumes the role's old session (--resume).
+# The host is never stopped or closed; it just stops hosting the role.
+cmd_promote() {
+  local role="${1:-}"
+  if [[ -z "$role" || "$role" == --* ]]; then
+    echo "usage: project promote <role> [--cwd DIR] [--label TEXT] [--title TEXT] [--resume]" >&2
+    echo "                       [--task TEXT | --task-file PATH | --task -] [--wait [--timeout MS]]" >&2
+    exit 1
+  fi
+  local f host
+  f="$(ensure_state)"
+  host="$(read_host "$role" "$f")"
+  if [[ -z "$host" ]]; then
+    echo "error: role '$role' is not hosted — nothing to promote (use 'project spawn $role')" >&2
+    exit 1
+  fi
+  local a have_seed=false
+  for a in "$@"; do
+    case "$a" in --task|--task-file|--resume) have_seed=true ;; esac
+  done
+  if ! $have_seed; then
+    echo "error: promote needs the role's handoff: --task-file <path> (or --task / --task -), or --resume" >&2
+    exit 1
+  fi
+  cmd_spawn "$@"
 }
 
 cmd_cleanup() {
@@ -2198,6 +2449,8 @@ case "$cmd" in
   register)    cmd_register "$@" ;;
   stop)        cmd_stop "$@" ;;
   spawn)       cmd_spawn "$@" ;;
+  host)        cmd_host "$@" ;;
+  promote)     cmd_promote "$@" ;;
   open)        cmd_open "$@" ;;
   close)       cmd_close ;;
   rename)      cmd_rename "$@" ;;

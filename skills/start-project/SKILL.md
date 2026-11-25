@@ -40,8 +40,8 @@ Present the work plan to the user:
 [start-project] Epic APP-XXXX — N tickets
 
 Wave 1 (no dependencies):
-  - APP-1001: Add new column to transactions table
-  - APP-1002: Create withdrawal activity handler
+  - APP-1001: Add new column to orders table
+  - APP-1002: Create order export handler
 
 Wave 2 (depends on wave 1):
   - APP-1003: Backfill new column (depends on APP-1001)

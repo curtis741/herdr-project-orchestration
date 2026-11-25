@@ -2,7 +2,7 @@
 # project-orchestration mod-setup — run by the mod's init(); safe to run by hand.
 #
 # Brings the share clone (~/.local/share/project-orchestration) forward to the newest release
-# tag (clones it if missing; fetches at most once a day; never moves backwards), copies the
+# tag (a fresh clone detaches at it; fetches at most once a day; moves only forward by commit ancestry), copies the
 # clone's newer mod files over this folder, then runs the clone's scripts/setup.sh, which
 # links the `project` CLI, skills, guide and context-guard hook from the clone.
 #
@@ -27,7 +27,6 @@ main() {
   fi
 
   toml_version() { grep '^version' "$1/herdr-plugin.toml" 2>/dev/null | sed 's/.*"\(.*\)"/\1/'; }
-  ver_gt() { [[ "$1" != "$2" && "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n1)" == "$1" ]]; }
 
   mkdir -p "$cfg"
   local old=""
@@ -52,14 +51,18 @@ main() {
     fi
   fi
 
-  # Newest release tag; move only forward.
-  local cur tag tagver
-  cur="$(toml_version "$share")"
+  # Newest release tag. A fresh clone always detaches at it; after that, move only forward
+  # (the clone's commit must be an ancestor of the tag).
+  local tag head tagc
   tag="$(git -C "$share" tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
   if [[ -n "$tag" ]]; then
-    tagver="${tag#v}"
-    if [[ -z "$cur" ]] || ver_gt "$tagver" "$cur"; then
-      echo "Moving share clone ${cur:+v$cur }→ $tag"
+    head="$(git -C "$share" rev-parse HEAD)"
+    tagc="$(git -C "$share" rev-parse "refs/tags/$tag^{commit}")"
+    if (( fresh )); then
+      echo "Using release $tag"
+      git -C "$share" checkout --quiet --detach "$tag"
+    elif [[ "$head" != "$tagc" ]] && git -C "$share" merge-base --is-ancestor "$head" "$tagc"; then
+      echo "Moving share clone ${old:+v$old }→ $tag"
       git -C "$share" checkout --quiet --detach "$tag"
     fi
   elif (( fresh )); then
