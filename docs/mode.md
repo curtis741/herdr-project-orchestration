@@ -14,6 +14,15 @@ Senders never change. A worker always runs `project prompt librarian "COMPLETE �
 
 Every event is sent **once**, to **one role**. Never the same information to several destinations. Hosting is what makes that cheap on a small project: the signal still goes to `librarian`, and it lands with the orchestrator when the orchestrator hosts that role. There's no fan-out and no "also tell the orchestrator."
 
+## Default: the orchestrator hosts everything
+
+*Decided 2026-11-25.* Every project starts with the orchestrator hosting librarian, researcher and watcher. A role gets its own agent only when it's promoted. So a role always resolves to someone, and senders never need a fallback. Planned CLI:
+- **`project host <role>`:** the calling agent takes a role. The registry points the role at the caller's terminal, marked as hosted. `project init` / `start` do this for the orchestrator automatically.
+- **`project promote <role> --task …`:** the host writes a handoff for that role. Then spawn a dedicated agent seeded from it and point the role at the new agent. The host's terminal is never closed (unlike `--takeover` + `retire`).
+- **A message carries its role** (`[librarian] DONE …`) so a host knows which role's rules apply.
+
+The guided tour (`DEMO-`) shows this: it starts small with only workers, and the orchestrator hosting the rest. Then it asks whether to scale up, and promotes the librarian and researcher live.
+
 ## Choosing at the start
 
 Staffing is decided when the project starts (`/start-project <key>`), not with a flag:
