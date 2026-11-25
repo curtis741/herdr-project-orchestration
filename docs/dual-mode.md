@@ -91,3 +91,21 @@ One orchestrating session, starting fresh from this file, plus one fresh worker 
 
 - Branch `dual-mode`. Step 1 is split as follows: `dual-1-cli` (project.sh + setup.sh, which defines the subcommand interface) runs first, then four parallel workers, one per skill file: start-project/SKILL.md, DESIGN.md, dry-run-project, guided-tour. A strict per-file split would have had every worker editing project.sh.
 - Checks for steps 1–2: the orchestrator runs in the Herdr app, so `dry-run-project` runs in a new classic workspace (`herdr workspace create`) and its result is read with `herdr agent read`.
+- Steps 1–2 done (`eb08eec`, `925ddaf`). Step 3 passed `dry-run-project` on both the app (hc) and classic.
+- **Installed symlinks point at this repo** (since step 3): `~/.local/bin/project`, `~/.local/bin/project-context-guard`, and `~/.claude/skills/{start-project,project-worker,dry-run-project,guided-tour,PROJECT_GUIDE.md}`. `hc run` can't pass env, so agents spawned on hc run whichever `project` is on PATH, and the hc backend can only be tested this way. Undo with `herdr plugin update`, or by re-running the plugin's setup.
+
+### Step 3 decisions (hc backend)
+
+- **Backend choice:** `HC_TERMINAL_ID` set and `HERDR_ENV` unset → hc; otherwise classic. `PROJECT_BACKEND=hc|herdr` overrides.
+- **Contract additions:** `be_spawn` creates the terminal, starts the agent and delivers the first task in a single call. Its `--pre-task` hook registers the role before the agent can run anything (classic: between agent start and the prompt, as before; hc: before `hc run`, because names are deterministic). Also `be_self`, `be_self_workspace` and `be_self_project`.
+- **Project identity on hc:** hc can't inject `HERDR_PROJECT`, so the CLI reads the calling terminal's `project` label.
+- **Session id on hc:** hc has no session API. `be_spawn` passes `--session-id <uuid>` and stores it as a `session=` label. Not verified: whether `--resume` keeps that id.
+- **Names:** `<project>-<role>`. Names longer than 32 characters become the first 21 plus a hash. A name that's taken gets `-2`, `-3`, and so on (a takeover successor becomes `…-2`).
+- **Waits:** on hc, a `--wait` (prompt and spawn) keeps waiting while `hc wait` returns `reason: message`, until the target's turn ends or the deadline set at the start passes.
+
+### Open after step 3 (for steps 4–5)
+
+- `project init` without a workspace id leaves `workspace_id` empty on hc: a hand-started orchestrator in the app can't spawn. It should probably default to `be_self_workspace`.
+- `hc send` to a `blocked` agent refuses without `--force`, so a NEED or READY signal to a blocked orchestrator is dropped silently.
+- `project close` leaves the space's finished root shell in `hc ls --all`.
+- Not exercised on hc yet: spinoff, `dump`, `reset --handoff`, `recover`, takeover. These are step 5.

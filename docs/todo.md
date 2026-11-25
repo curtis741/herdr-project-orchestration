@@ -11,6 +11,11 @@ Small items noticed along the way and parked for later. Bigger ideas go in [road
 - **The librarian named pane IDs in its output** despite being told not to look them up. It didn't happen on the step 2 run either. If it comes back, check whether `project prompt` echoes the pane ID.
 - **The dry run doesn't start clean.** `project open DRY-RUN` overwrites the leftover state file but keeps the old signal log, so `project log` mixes in earlier runs. The harness should remove `DRY-RUN.json` and its log before `open`, or `open` should rotate the log.
 
+- **The dry run's DAG-complete check depends on the librarian volunteering it.** On the hc run (step 3) the librarian only ACKed the final merge. The librarian's boot prompt in the harness should ask for an explicit `DAG COMPLETE` line.
+- **`project open` with a name that already exists** overwrites the state file and loses the earlier workspace id, which orphans that workspace. It should refuse, or reuse the workspace.
+
+- **The dry-run harness says "steps 3-7"** in the Step 4 assignment, but the worker boot prompt has 6 steps. fake-001 noticed and stopped at 6. Also, Step 5's "librarian → you: ACK" overstates it: the librarian ACKs in its own pane.
+
 ## Other
 
 - **The upgrade notice in `setup.sh` tells the orchestrator to have agents reload their skills.** That's a fan-out, which DESIGN.md § "Plugin updates are orchestrator-only" rules out. Reword it to: tell the user what changed and let them decide which agents to recycle.

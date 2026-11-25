@@ -24,8 +24,34 @@ while [[ -L "$_src" ]]; do
 done
 PROJECT_SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
 unset _src _dir
+# Backend choice, from the environment: HC_TERMINAL_ID (Herdr app terminal) -> hc,
+# HERDR_ENV (classic herdr pane) -> herdr. Classic stays the default when both or
+# neither is set. PROJECT_BACKEND=hc|herdr overrides.
+_be="${PROJECT_BACKEND:-}"
+if [[ -z "$_be" ]]; then
+  if [[ -n "${HC_TERMINAL_ID:-}" && -z "${HERDR_ENV:-}" ]]; then _be=hc; else _be=herdr; fi
+fi
+case "$_be" in
+  hc|herdr) ;;
+  *) echo "error: unknown PROJECT_BACKEND '$_be' (use hc or herdr)" >&2; exit 1 ;;
+esac
 # shellcheck source=backend/herdr.sh
-source "$PROJECT_SCRIPT_DIR/backend/herdr.sh"
+source "$PROJECT_SCRIPT_DIR/backend/$_be.sh"
+PROJECT_BACKEND="$_be"
+unset _be
+
+# Spawn an agent through the backend. Same arguments as be_spawn. Sets pane_id and
+# tab_id in the caller's scope (declare them local) and SPAWN_RC to the delivery
+# status: be_spawn prints the handle before it delivers the first task, so the
+# caller can register the agent even when delivery failed, then exit "$SPAWN_RC".
+# Exits if no agent was created.
+_spawn_agent() {
+  local out
+  SPAWN_RC=0
+  out="$(be_spawn "$@")" || SPAWN_RC=$?
+  read -r pane_id tab_id <<<"$out"
+  [[ -n "${pane_id:-}" ]] || exit 1
+}
 
 # --- Auto-update check (never blocks) ---
 _update_check() {
@@ -137,7 +163,8 @@ resolve_project() {
 # Find the single project whose state file claims this pane (any agent) or,
 # failing that, this workspace. Prints nothing if zero or multiple match.
 _project_from_state_files() {
-  local pane="${HERDR_PANE_ID:-}" ws="${HERDR_WORKSPACE_ID:-}"
+  local pane ws
+  pane="$(be_self)"; ws="$(be_self_workspace)"
   [[ -z "$pane" && -z "$ws" ]] && return 0
   local f matches=()
   if [[ -n "$pane" ]]; then
@@ -218,8 +245,10 @@ read_session() {
 
 resolve_caller() {
   local f="$1"
-  if [[ -n "${HERDR_PANE_ID:-}" ]]; then
-    jq -r --arg pane "$HERDR_PANE_ID" \
+  local me
+  me="$(be_self)"
+  if [[ -n "$me" ]]; then
+    jq -r --arg pane "$me" \
       '.agents | to_entries[] | select(.value.pane_id == $pane) | .key' "$f" 2>/dev/null || true
   fi
 }
@@ -255,7 +284,7 @@ cmd_start() {
   fi
 
   if ! be_available; then
-    echo "error: herdr CLI not found" >&2
+    echo "error: terminal backend CLI not found ($PROJECT_BACKEND)" >&2
     exit 1
   fi
 
@@ -272,32 +301,30 @@ cmd_start() {
   # Initialize the project with the workspace ID
   eval "$(cmd_init "$name" "$ws_id")"
 
-  # Wait for the pane shell to be ready, then start the agent
-  be_agent_start "$pane_id" orchestrator -n orchestrator || exit 1
-  echo "orchestrator agent started in $pane_id" >&2
-
-  # Register the orchestrator with the correct pane ID
+  # Start the agent in the workspace's root pane and hand it the skill as its first task.
+  # The orchestrator is registered (under the right pane) before it can run anything.
+  local root_pane="$pane_id"
   export HERDR_PROJECT="$name"
-  cmd_register orchestrator "$pane_id"
-
-  # Prompt the orchestrator to load the skill
-  be_prompt "$pane_id" "/start-project $name" >&2
+  _pre_start() { cmd_register orchestrator "$1" "$3"; }
+  _spawn_agent --pre-task _pre_start --root "$root_pane" --echo "$ws_id" "$PWD" "orchestrator" "$name" orchestrator "/start-project $name" -n orchestrator
+  echo "orchestrator agent started in $pane_id" >&2
+  [[ "$SPAWN_RC" -eq 0 ]] || exit "$SPAWN_RC"
 
   echo "project started: $name (workspace $ws_id, pane $pane_id)" >&2
 }
 
 cmd_register() {
   local role="${1:-}" pane_id="${2:-}" session_id="${3:-}"
-  # Default pane_id from HERDR_PANE_ID so agents can self-register
+  # Default pane_id to this agent's own handle so agents can self-register
   if [[ -z "$pane_id" ]]; then
-    pane_id="${HERDR_PANE_ID:-}"
+    pane_id="$(be_self)"
   fi
   if [[ -z "$role" ]]; then
     echo "usage: project register <role>" >&2
     exit 1
   fi
   if [[ -z "$pane_id" ]]; then
-    echo "error: cannot detect pane ID — set \$HERDR_PANE_ID or pass it explicitly" >&2
+    echo "error: cannot detect this agent's pane — pass it explicitly (project register <role> <pane>)" >&2
     exit 1
   fi
   local f
@@ -868,30 +895,28 @@ cmd_spinoff() {
     exit 1
   }
 
-  local pane_id tab_id
-  read -r pane_id tab_id < <(be_tab_create "$ws" "$repo_path" "$name — spinoff" "$project") || true
-  [[ -n "$pane_id" ]] || exit 1
-
   local short_title="$title"
   [[ ${#short_title} -gt 40 ]] && short_title="${short_title:0:37}..."
-  be_agent_start "$pane_id" "$name" -n "$name — spinoff: $short_title" || exit 1
-
-  # Pre-register so the worker shows up in roster/status/cleanup immediately.
-  # The worker's own 'project register' keeps these fields.
-  local tmp="${f}.tmp.$$"
-  jq --arg role "$name" --arg pane "$pane_id" --arg id "$id" --arg from "$from" \
-     --arg title "$title" --arg brief "$brief_file" --argjson notify "$notify" \
-    '.agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at)) + {
-       pane_id: $pane, current_ticket: $id,
-       tickets: (((.agents[$role].tickets) // []) + [$id] | unique),
-       spinoff: {from: $from, title: $title, brief: $brief, notify: $notify}
-     }' "$f" > "$tmp" && mv "$tmp" "$f"
-
-  be_prompt "$pane_id" "Spinoff worker $name for project $epic — a throwaway worker on one scoped fix.
+  # Pre-register (before the worker can run anything) so it shows up in roster/status/cleanup
+  # immediately. The worker's own 'project register' keeps these fields.
+  _pre_spinoff() {
+    local tmp="${f}.tmp.$$"
+    jq --arg role "$name" --arg pane "$1" --arg id "$id" --arg from "$from" \
+       --arg title "$title" --arg brief "$brief_file" --argjson notify "$notify" \
+      '.agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at)) + {
+         pane_id: $pane, current_ticket: $id,
+         tickets: (((.agents[$role].tickets) // []) + [$id] | unique),
+         spinoff: {from: $from, title: $title, brief: $brief, notify: $notify}
+       }' "$f" > "$tmp" && mv "$tmp" "$f"
+  }
+  local pane_id tab_id
+  _spawn_agent --pre-task _pre_spinoff "$ws" "$repo_path" "$name — spinoff" "$project" "$name" "Spinoff worker $name for project $epic — a throwaway worker on one scoped fix.
 Your role is '$name'. Your worktree is .worktrees/$id/ (branch $id).
 Your brief: $brief_file
 
-Run /project-worker and follow § Spinoff mode." >/dev/null
+Run /project-worker and follow § Spinoff mode." -n "$name — spinoff: $short_title"
+
+  [[ "$SPAWN_RC" -eq 0 ]] || exit "$SPAWN_RC"
 
   log_signal "$from" "$name" "SPINOFF" "$title"
   local orch_pane
@@ -942,7 +967,7 @@ cmd_spinoff_done() {
   cmd_stop "$me" >/dev/null
   echo "spinoff finished — closing this tab"
   local tab
-  tab=$(be_tab_of "${HERDR_PANE_ID:-}")
+  tab=$(be_tab_of "$(be_self)")
   [[ -n "$tab" ]] && be_tab_close "$tab" 2>/dev/null || true
 }
 
@@ -1630,9 +1655,10 @@ _dump_agents() {
   local caller
   caller="$(resolve_caller "$f")"
 
-  local targets=() role pane
+  local targets=() role pane self_pane
+  self_pane="$(be_self)"
   while IFS=$'\t' read -r role pane; do
-    [[ -z "$role" || "$pane" == "${HERDR_PANE_ID:-}" ]] && continue
+    [[ -z "$role" || "$pane" == "$self_pane" ]] && continue
     targets+=("$role")
   done < <(jq -r '.agents | to_entries[] | select(.value.stopped != true) | [.key, .value.pane_id // ""] | @tsv' "$f")
 
@@ -1843,18 +1869,15 @@ _reset_handoff() {
   epic="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
 
   local pane_id tab_id
-  read -r pane_id tab_id < <(be_tab_create "$ws" "$PWD" "orchestrator" "$name") || true
-  [[ -n "$pane_id" ]] || exit 1
-  be_agent_start "$pane_id" orchestrator -n orchestrator || exit 1
-
-  be_prompt "$pane_id" "/start-project $epic
+  _spawn_agent "$ws" "$PWD" "orchestrator" "$name" orchestrator "/start-project $epic
 
 You are a fresh orchestrator taking over after a project RESET. Before Step 1:
 1. Run: project register orchestrator
 2. Read $reset_file — your predecessor's master distill. Trust it; check an item against the tracker only when you act on it. Read the agent dump files it lists only when you touch that area.
 3. Your predecessor is still live as orchestrator@prev. If anything is unclear, ask it: project ask orchestrator@prev '<question>'. When you have no more questions, run: project retire orchestrator
 4. Every other agent from the previous run is stopped. Don't resume their sessions — spawn fresh agents as the skill describes, and give the new librarian the path to librarian.final.md if one is listed.
-Then continue from Step 1, building the plan from the tracker plus the distill." >/dev/null
+Then continue from Step 1, building the plan from the tracker plus the distill." -n orchestrator
+  [[ "$SPAWN_RC" -eq 0 ]] || exit "$SPAWN_RC"
 
   log_signal "orchestrator" "orchestrator" "RESET" "successor spawned in $pane_id"
   echo "successor orchestrator started — it will retire this orchestrator when it's done asking questions"
@@ -1878,7 +1901,7 @@ cmd_retire() {
       return 0
     fi
   fi
-  if [[ "$old_pane" == "${HERDR_PANE_ID:-}" ]]; then
+  if [[ "$old_pane" == "$(be_self)" ]]; then
     echo "error: refusing to retire your own pane" >&2
     exit 1
   fi
@@ -2028,25 +2051,29 @@ cmd_spawn() {
     claude_args=(--resume "$sid" -n "$title")
   fi
 
+  # Pre-register (before the agent can run anything) so the role shows up in roster/status
+  # immediately and its first signal has a sender. A takeover leaves routing on the old
+  # agent until the successor registers itself. On hc <tab> is empty here; patched below.
+  _pre_spawn() {
+    if ! $takeover; then
+      local tmp="${f}.tmp.$$"
+      jq --arg role "$role" --arg pane "$1" --arg tab "$2" \
+        '.agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at, .predecessor_pane))
+           + {pane_id: $pane, tab_id: $tab, spawned_at: (now | todate)}' \
+        "$f" > "$tmp" && mv "$tmp" "$f"
+    fi
+    log_signal "orchestrator" "$role" "SPAWN" "$role$($resume && echo ' (resume)')"
+  }
   local pane_id tab_id
-  read -r pane_id tab_id < <(be_tab_create "$ws" "$cwd" "$label" "$project") || true
-  [[ -n "$pane_id" ]] || exit 1
-  be_agent_start "$pane_id" "$role" "${claude_args[@]}" || exit 1
+  _spawn_agent --pre-task _pre_spawn ${wait_args[@]+"${wait_args[@]}"} "$ws" "$cwd" "$label" "$project" "$role" "$task" "${claude_args[@]}"
 
-  # Pre-register so the role shows up in roster/status immediately. A takeover
-  # leaves routing on the old agent until the successor registers itself.
-  if ! $takeover; then
+  # hc only learns the tab after launch; patch it into the pre-registered entry.
+  if [[ -n "$tab_id" ]] && ! $takeover; then
     local tmp="${f}.tmp.$$"
-    jq --arg role "$role" --arg pane "$pane_id" --arg tab "$tab_id" \
-      '.agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at, .predecessor_pane))
-         + {pane_id: $pane, tab_id: $tab, spawned_at: (now | todate)}' \
-      "$f" > "$tmp" && mv "$tmp" "$f"
+    jq --arg role "$role" --arg tab "$tab_id" '.agents[$role].tab_id = $tab' "$f" > "$tmp" && mv "$tmp" "$f"
   fi
-  log_signal "orchestrator" "$role" "SPAWN" "$role$($resume && echo ' (resume)')"
 
-  if $have_task; then
-    be_prompt "$pane_id" "$task" ${wait_args[@]+"${wait_args[@]}"} >/dev/null
-  fi
+  [[ "$SPAWN_RC" -eq 0 ]] || exit "$SPAWN_RC"
   echo "spawned: $role"
 }
 
@@ -2146,10 +2173,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Sessions resumed after a reboot come back without the --env flags their tab
-# was created with, but HERDR_PANE_ID/HERDR_WORKSPACE_ID are still set — recover
-# the project name from the state file that claims this pane or workspace.
+# was created with (and on the hc backend nothing is injected at all), but the
+# terminal itself still knows who it is — recover the project name from its
+# project label, else from the state file that claims this pane or workspace.
 if [[ -z "${HERDR_PROJECT:-}" ]]; then
-  _recovered="$(_project_from_state_files)"
+  _recovered="$(be_self_project)"
+  [[ -n "$_recovered" ]] || _recovered="$(_project_from_state_files)"
   [[ -n "$_recovered" ]] && export HERDR_PROJECT="$_recovered"
 fi
 

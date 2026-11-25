@@ -10,7 +10,7 @@ Tests the messaging choreography between orchestrator, librarian, watcher, and w
 ## Prerequisites
 
 ```bash
-test "${HERDR_ENV:-}" = 1
+test -n "${HERDR_ENV:-}${HC_TERMINAL_ID:-}"
 which project
 ```
 

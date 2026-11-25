@@ -15,6 +15,21 @@
 #   be_tab_create <workspace_id> <cwd> <label> <project>
 #                                                  prints "<pane_id> <tab_id>"
 #   be_agent_start <pane> <name> [claude args...]  start claude in a fresh pane (retries while it boots)
+#   be_spawn [--wait] [--timeout MS] [--root <pane>] [--echo] <workspace_id> <cwd> <label> <project> <role> <message> [claude args...]
+#                                                  create a tab (or, with --root, reuse that pane), start claude, deliver
+#                                                  <message> (may be empty) as its first task. Prints "<pane> <tab>" BEFORE
+#                                                  delivering/waiting, so the caller can still register the agent when
+#                                                  delivery fails (non-zero exit). --wait blocks until the first turn ends.
+#                                                  --echo sends the delivery result to stderr instead of discarding it.
+#                                                  --pre-task FN calls "FN <pane> <tab> <session>" (stdout discarded; non-zero
+#                                                  aborts) after the agent exists but BEFORE it can run anything, so the caller
+#                                                  can register the role first. Classic: between agent start and the prompt
+#                                                  (session empty; <tab> known). hc: before launch, with the deterministic name
+#                                                  (tab empty, session known); the caller patches the tab in from the output.
+#                                                  Backends that can't send a task after launch (hc) put it in the launch.
+#   be_self                                        this agent's own handle, comparable to the stored one (empty if unknown)
+#   be_self_workspace                              workspace id this agent lives in (empty if unknown)
+#   be_self_project                                project key recorded on this agent at spawn (empty if none; classic uses $HERDR_PROJECT)
 #   be_prompt <pane> <message> [--wait] [--until S]... [--timeout MS]
 #                                                  deliver a message, never clobbering a human draft
 #   be_read <pane> <lines>                         recent unwrapped pane text
@@ -93,6 +108,44 @@ be_agent_start() {
     sleep 0.5
   done
 }
+
+# One call that does tab_create + agent_start + first prompt. See contract above.
+be_spawn() {
+  local wait_args=() root="" echo_out=false pre=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pre-task) pre="${2:?--pre-task needs a function}"; shift 2 ;;
+      --wait)    wait_args+=(--wait); shift ;;
+      --timeout) wait_args+=(--timeout "${2:?--timeout needs a value}"); shift 2 ;;
+      --root)    root="${2:?--root needs a value}"; shift 2 ;;
+      --echo)    echo_out=true; shift ;;
+      *) break ;;
+    esac
+  done
+  local ws="$1" cwd="$2" label="$3" project="$4" role="$5" message="$6"
+  shift 6
+  local pane tab=""
+  if [[ -n "$root" ]]; then
+    pane="$root"
+  else
+    read -r pane tab < <(be_tab_create "$ws" "$cwd" "$label" "$project") || true
+    [[ -n "$pane" ]] || return 1
+  fi
+  be_agent_start "$pane" "$role" "$@" || return 1
+  [[ -z "$pre" ]] || "$pre" "$pane" "$tab" "" >/dev/null || return 1
+  echo "$pane $tab"
+  if [[ -n "$message" ]]; then
+    if $echo_out; then
+      be_prompt "$pane" "$message" ${wait_args[@]+"${wait_args[@]}"} >&2
+    else
+      be_prompt "$pane" "$message" ${wait_args[@]+"${wait_args[@]}"} >/dev/null
+    fi
+  fi
+}
+
+be_self() { echo "${HERDR_PANE_ID:-}"; }
+be_self_workspace() { echo "${HERDR_WORKSPACE_ID:-}"; }
+be_self_project() { :; }
 
 # Deliver a prompt to an agent pane without clobbering a human's half-typed draft.
 # `herdr agent prompt` types into the input box, so any draft gets concatenated
