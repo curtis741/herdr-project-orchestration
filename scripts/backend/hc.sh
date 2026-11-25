@@ -219,40 +219,14 @@ be_spawn() {
 
 # --- blocked targets: per-target delivery queue -----------------------------
 # `hc send` refuses a blocked terminal (a person must answer a question or permission
-# prompt) unless --force, and --force could answer that prompt. So a message is never
-# dropped and never forced: a fire-and-forget prompt that finds the target blocked (or
-# finds earlier queued messages, to keep order) is written to a per-target queue under
-# the project dir and a deliverer terminal sends it once the target accepts input.
-#   <project dir>/queue/<target>/NNNNNNNN.msg   one message each, sorted = send order
-#   <project dir>/queue/<target>/.deliverer/     lock (mkdir) holding the deliverer pid
-#   <project dir>/queue/<target>/.mx/            short lock for sequence allocation
-# QUEUED / DELIVERED / DROPPED entries go to the project signal log.
+# prompt) unless --force, and --force could answer that prompt. The queue itself is shared
+# with the classic backend (backend/queue.sh); this section is the hc side of its hooks.
 
-_hc_qdir() {
-  local proj root t
-  proj=$(resolve_project 2>/dev/null) || proj=_noproject
-  [[ -n "$proj" ]] || proj=_noproject
-  root="${PROJECTS_DIR:-$HOME/.herdr/projects}/$proj/queue"
-  t=$(printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '_')
-  echo "$root/$t"
-}
-
-_hc_qpending() {
-  compgen -G "$1/*.msg" >/dev/null 2>&1
-}
-
-# <sigfile> <sender> <receiver> <type> <payload>  (same columns as log_signal)
-_hc_qlog() {
-  local sig="$1" payload
-  [[ -n "$sig" ]] || return 0
-  payload=$(printf '%s' "$5" | tr '\n\t' '  ' | cut -c1-200)
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$2" "$3" "$4" "$payload" \
-    >> "$sig" 2>/dev/null || true
-}
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/queue.sh"
 
 # A failed send worth retrying: target blocked, or hc says nothing was typed yet
 # (still starting / settling). Both leave the message untyped.
-_hc_retryable() {
+_be_q_retryable() {
   [[ "$1" == *blocked* || "$1" == *'"kind":"unavailable"'* ]]
 }
 
@@ -261,31 +235,15 @@ _hc_send_failed() {
   [[ "$2" -ne 0 ]] || echo "$1" | jq -e '.error' >/dev/null 2>&1
 }
 
-_hc_live() {
+_be_q_live() {
   [[ "$(hc get "$1" --json 2>/dev/null | jq -r '.state // empty' 2>/dev/null)" == "live" ]]
 }
 
-# Append <message> for <pane> to its queue and make sure a deliverer is running.
-_hc_enqueue() {
-  local pane="$1" message="$2" dir n i sig sender
-  dir=$(_hc_qdir "$pane")
-  mkdir -p "$dir" || return 1
-  sig=$(signals_file 2>/dev/null || true)
-  [[ -n "$sig" ]] && printf '%s' "$sig" > "$dir/.sig"
-  # allocate the next sequence number under a short lock (stale after ~10s)
-  for i in $(seq 1 100); do
-    mkdir "$dir/.mx" 2>/dev/null && break
-    [[ $i -eq 100 ]] && { rm -rf "$dir/.mx"; mkdir "$dir/.mx" 2>/dev/null || true; }
-    sleep 0.1
-  done
-  n=$(( 10#$(cat "$dir/.seq" 2>/dev/null || echo 0) + 1 ))
-  echo "$n" > "$dir/.seq"
-  printf '%s' "$message" > "$dir/.tmp.$n"
-  mv "$dir/.tmp.$n" "$dir/$(printf '%08d' "$n").msg"
-  rmdir "$dir/.mx" 2>/dev/null || true
-  sender=$(be_self 2>/dev/null || true)
-  _hc_qlog "$sig" "${sender:-unknown}" "$pane" "QUEUED" "target not accepting input, queued #$n: $message"
-  _hc_ensure_deliverer "$pane" "$dir"
+_be_q_send() {
+  local out rc=0
+  out=$(hc send --json "$1" "$2" 2>&1) || rc=$?
+  echo "$out"
+  ! _hc_send_failed "$out" "$rc"
 }
 
 # The deliverer runs as its own hc terminal (not a child of whatever process ran
@@ -301,74 +259,13 @@ _hc_dname() {
   printf '%s' "$base"
 }
 
-_hc_ensure_deliverer() {
-  local pane="$1" dir="$2" i pid proj
+_be_q_launch() {
+  local proj
   proj=$(resolve_project 2>/dev/null || true); [[ -n "$proj" ]] || proj=_noproject
-  for i in 1 2 3; do
-    if mkdir "$dir/.deliverer" 2>/dev/null; then
-      if hc run --bg --no-parent --rm --no-notify --name "$(_hc_dname "$pane")" \
-           --label "project=$proj" --label role=deliver --cwd "$dir" -- \
-           env "HC_QUEUE_POLL=${HC_QUEUE_POLL:-3}" bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hc.sh" --deliver "$pane" "$dir" \
-           </dev/null >/dev/null 2>&1; then
-        return 0   # the deliverer writes its own pid into the lock
-      fi
-      rm -rf "$dir/.deliverer"   # name taken (live one draining/exiting) or launch failed: retry
-      sleep 0.5
-      continue
-    fi
-    pid=$(cat "$dir/.deliverer/pid" 2>/dev/null || true)
-    if [[ -z "$pid" ]]; then sleep 0.5; pid=$(cat "$dir/.deliverer/pid" 2>/dev/null || true); fi
-    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then return 0; fi
-    rm -rf "$dir/.deliverer"   # dead deliverer: take over
-  done
-  return 0
-}
-
-# The deliverer (own hc terminal, entry `hc.sh --deliver <pane> <dir>`): sends queued messages in order, retrying while the target is
-# blocked. Gives up (logging each dropped message) when the target is gone or finished,
-# or after ~12h. Exits when the queue is empty.
-_hc_deliver_loop() {
-  local pane="$1" dir="$2" sig mypid="" f msg out rc tries started=$SECONDS left
-  sig=$(cat "$dir/.sig" 2>/dev/null || true)
-  mypid=$$
-  echo "$mypid" > "$dir/.deliverer/pid" 2>/dev/null || exit 0
-  while true; do
-    [[ -d "$dir" ]] || exit 0
-    f=$(ls "$dir"/*.msg 2>/dev/null | head -1)
-    if [[ -z "$f" ]]; then
-      rm -rf "$dir/.deliverer"                        # release, then re-check for a late enqueue
-      _hc_qpending "$dir" || exit 0
-      mkdir "$dir/.deliverer" 2>/dev/null || exit 0   # someone else took over
-      echo "$mypid" > "$dir/.deliverer/pid"
-      continue
-    fi
-    msg=$(cat "$f")
-    tries=0
-    while true; do
-      [[ -d "$dir" ]] || exit 0
-      rc=0
-      out=$(hc send --json "$pane" "$msg" 2>&1) || rc=$?
-      if ! _hc_send_failed "$out" "$rc"; then
-        rm -f "$f"
-        _hc_qlog "$sig" queue "$pane" "DELIVERED" "queued message delivered: $msg"
-        break
-      fi
-      left=""
-      if ! _hc_live "$pane"; then left="target gone or finished"
-      elif (( SECONDS - started > 43200 )); then left="gave up after 12h"
-      elif ! _hc_retryable "$out" && (( ++tries >= 10 )); then left="send keeps failing: $(echo "$out" | head -c 120)"
-      fi
-      if [[ -n "$left" ]]; then
-        for f in "$dir"/*.msg; do
-          [[ -f "$f" ]] || continue
-          _hc_qlog "$sig" queue "$pane" "DROPPED" "$left: $(cat "$f")"
-          rm -f "$f"
-        done
-        break
-      fi
-      sleep "${HC_QUEUE_POLL:-3}"
-    done
-  done
+  hc run --bg --no-parent --rm --no-notify --name "$(_hc_dname "$1")" \
+    --label "project=$proj" --label role=deliver --cwd "$2" -- \
+    env "HC_QUEUE_POLL=${HC_QUEUE_POLL:-3}" bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/hc.sh" --deliver "$1" "$2" \
+    </dev/null >/dev/null 2>&1
 }
 
 # Deliver a message. Args after the message: --wait, --until S (ignored: hc waits for the
@@ -398,13 +295,13 @@ be_prompt() {
   done
   local deadline=$(( SECONDS + timeout_s ))
   local out rc reason wres dir remaining args
-  dir=$(_hc_qdir "$pane")
+  dir=$(_q_dir "$pane")
 
   while true; do
-    if [[ -d "$dir" ]] && _hc_qpending "$dir"; then
+    if [[ -d "$dir" ]] && _q_pending "$dir"; then
       # earlier messages are still queued: keep order
       if ! $do_wait; then
-        _hc_enqueue "$pane" "$message" && echo '{"queued":true}'
+        _q_enqueue "$pane" "$message" && echo '{"queued":true}'
         return 0
       fi
       if (( SECONDS >= deadline )); then
@@ -425,9 +322,9 @@ be_prompt() {
     rc=0
     out=$(hc send "${args[@]}" "$pane" "$message" 2>&1) || rc=$?
     _hc_send_failed "$out" "$rc" || break
-    if _hc_retryable "$out"; then
+    if _be_q_retryable "$out"; then
       if ! $do_wait; then
-        _hc_enqueue "$pane" "$message" && echo '{"queued":true}'
+        _q_enqueue "$pane" "$message" && echo '{"queued":true}'
         return 0
       fi
       if (( SECONDS >= deadline )); then
@@ -528,5 +425,5 @@ be_update_check() {
 # Entry point for the deliverer terminal: bash hc.sh --deliver <pane> <queue dir>
 if [[ "${BASH_SOURCE[0]}" == "$0" && "${1:-}" == "--deliver" ]]; then
   set +e
-  _hc_deliver_loop "$2" "$3"
+  _q_deliver_loop "$2" "$3"
 fi

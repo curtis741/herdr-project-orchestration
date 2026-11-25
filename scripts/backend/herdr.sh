@@ -147,15 +147,110 @@ be_self() { echo "${HERDR_PANE_ID:-}"; }
 be_self_workspace() { echo "${HERDR_WORKSPACE_ID:-}"; }
 be_self_project() { :; }
 
-# Deliver a prompt to an agent pane without clobbering a human's half-typed draft.
-# `herdr agent prompt` types into the input box, so any draft gets concatenated
-# with the incoming message. Ctrl+S is Claude Code's stash: it parks the draft,
-# and Claude Code restores it automatically after the next submit. On an empty
-# input it's a no-op. Extra args (--wait, --until, --timeout) pass through to
-# `herdr agent prompt`.
+# --- talking to agents -------------------------------------------------------
+# A blocked agent (an open AskUserQuestion or permission prompt) can't take a message:
+# `herdr agent prompt` rejects it with agent_blocked. So a message is never dropped and
+# never forced — it goes into the per-target queue shared with the hc backend
+# (backend/queue.sh) and a detached deliverer sends it, in order, once the agent unblocks.
+# The signal log records QUEUED, DELIVERED and DROPPED.
+#
+# ctrl+s is only ever sent to an agent that is not blocked. (Checked on a real agent: it
+# is a visible no-op on an open AskUserQuestion menu, but its effect on a permission prompt
+# is unverified, and there is nothing to stash there anyway.)
+
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/queue.sh"
+
+# One delivery attempt without --wait args: stash a human's half-typed draft, then type.
+# `herdr agent prompt` types into the input box, so a draft would be concatenated with the
+# incoming message. Ctrl+S is Claude Code's stash: it parks the draft, and Claude Code
+# restores it automatically after the next submit. On an empty input it's a no-op.
+# Refuses (agent_blocked, nothing sent) when the agent is blocked, before any key is sent.
+_herdr_send() {
+  local pane="$1"; shift
+  if [[ "$(be_state "$pane")" == "blocked" ]]; then
+    echo '{"error":{"code":"agent_blocked","message":"agent '"$pane"' is blocked and requires interactive input"}}'
+    return 1
+  fi
+  herdr agent send-keys "$pane" ctrl+s >/dev/null 2>&1 || true
+  herdr agent prompt "$pane" "$@"
+}
+
+# -> 0 if herdr accepted the message.
+_herdr_ok() {
+  [[ "$1" -eq 0 ]] && ! echo "$2" | jq -e '.error' >/dev/null 2>&1
+}
+
+# Blocked or still starting: nothing was typed, so retrying is safe.
+_be_q_retryable() {
+  [[ "$1" == *agent_blocked* || "$1" == *agent_not_ready* ]]
+}
+
+_be_q_live() {
+  be_alive "$1"
+}
+
+_be_q_send() {
+  local out rc=0
+  out=$(_herdr_send "$1" "$2" 2>&1) || rc=$?
+  echo "$out"
+  _herdr_ok "$rc" "$out"
+}
+
+# Own session (perl setsid) so the deliverer survives the sender — and a tool runner that
+# kills its process group when the call ends.
+_be_q_launch() {
+  command -v perl >/dev/null 2>&1 || return 1
+  HC_QUEUE_POLL="${HC_QUEUE_POLL:-3}" perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' \
+    bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/herdr.sh" --deliver "$1" "$2" \
+    </dev/null >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+  return 0
+}
+
+# Deliver a prompt to an agent pane. Extra args (--wait, --until, --timeout) pass through
+# to `herdr agent prompt`.
+#   - fire-and-forget: a blocked target (or earlier queued messages for it, to keep order)
+#     queues the message and returns 0 at once with {"queued":true}.
+#   - --wait: waits for the unblock (and for earlier queued messages to drain) up to the
+#     --timeout (default 180s), then delivers and waits as usual. On deadline prints a line
+#     containing "agent_blocked" so callers can classify it.
 be_prompt() {
-  herdr agent send-keys "$1" ctrl+s >/dev/null 2>&1 || true
-  herdr agent prompt "$@"
+  local pane="$1" message="$2"; shift 2
+  local pass=("$@") do_wait=false timeout_s=180 out rc
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wait)    do_wait=true; shift ;;
+      --timeout) timeout_s="$(( ($2 + 999) / 1000 ))"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  local deadline=$(( SECONDS + timeout_s )) dir blocked
+  dir=$(_q_dir "$pane")
+  while true; do
+    blocked=""
+    if [[ -d "$dir" ]] && _q_pending "$dir"; then
+      blocked="has earlier queued messages not yet delivered"   # keep order
+    else
+      rc=0
+      out=$(_herdr_send "$pane" "$message" ${pass[@]+"${pass[@]}"} 2>&1) || rc=$?
+      if _herdr_ok "$rc" "$out"; then echo "$out"; return 0; fi
+      _be_q_retryable "$out" || { echo "$out"; return "$rc"; }
+      blocked="is not accepting input"
+    fi
+    if ! $do_wait; then
+      _q_enqueue "$pane" "$message" && echo '{"queued":true}'
+      return 0
+    fi
+    if (( SECONDS >= deadline )); then
+      if [[ "$(be_state "$pane")" == "blocked" ]]; then
+        echo "agent_blocked: $pane is blocked and $blocked"
+      else
+        echo "timeout: $pane $blocked"
+      fi
+      return 1
+    fi
+    sleep 2
+  done
 }
 
 be_read() {
@@ -212,3 +307,9 @@ be_update_check() {
     echo "project: plugin update available — run 'herdr plugin update' to get the latest" > "$cache"
   fi
 }
+
+# Entry point for the deliverer: bash herdr.sh --deliver <pane> <queue dir>
+if [[ "${BASH_SOURCE[0]}" == "$0" && "${1:-}" == "--deliver" ]]; then
+  set +e
+  _q_deliver_loop "$2" "$3"
+fi
