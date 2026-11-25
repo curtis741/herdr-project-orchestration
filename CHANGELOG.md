@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+
+- **Runs on the Herdr app as well as classic Herdr.** The `project` CLI chooses its transport from the environment: `hc` in a Herdr app terminal, classic `herdr` otherwise (`PROJECT_BACKEND=hc|herdr` overrides). Skills and signals are the same on both.
+- **Skills never handle pane, tab or workspace IDs.** New role-addressed subcommands: `project spawn <role> --task …` (the first task goes in the launch, along with `--resume` and `--takeover`), `project open`/`close` (a project's workspace), `project rename <role>`, `project stop <role> --close`, `project status <role>` (one word), `project retire <role>`, and `<role>@prev` to reach a predecessor after a takeover. `project name` prints the current project's key. Use it instead of `$HERDR_PROJECT`, which isn't set on the app.
+- **Signals to a busy agent wait instead of being lost (app).** If the target is showing a question or a permission prompt, the message is queued and delivered in order once it's free. The signal log records QUEUED, DELIVERED and DROPPED.
+- **Herdr app mod.** A Projects panel lists live agents with their status and click-to-focus, and has Start and Dump. It installs and upgrades itself from release tags.
+- **One install location.** The plugin and the mod both use a single clone, `~/.local/share/project-orchestration`, and every link points into it. Whichever is newer wins, and links that pointed at an older checkout are repointed.
+- **Guided tour reworked.** Whoever needs you asks, in its own tab, with AskUserQuestion. The orchestrator asks only orchestration questions.
+
 ## 0.9.0
 
 - **`project dump` / `project reset`** — new: wind a project down in one command. `dump` pauses: every other live agent is prompted in parallel (`DUMP — ...`) to write unreported state to `$(project dir)/<role>.final.md` or nothing, then is stopped (session preserved) and its pane closed. `reset` (orchestrator) does the same dump, writes a master-distill template to `orchestrator.reset.md`, and `reset --handoff` spawns a fresh orchestrator that boots from it. Run from outside, `reset` asks the orchestrator to do it. If you receive `DUMP —`, follow it and don't signal anyone.

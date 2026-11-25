@@ -72,13 +72,28 @@ While developing, `~/.config/herdr-app/mods/project-orchestration` is a symlink 
 4. **Add the mod:** panel, start dialog, setup and changelog in `init()`. Run `herdr-app check` after every change.
    *Check for 3 and 4:* `DEMO-` on the app. It covers spawn, send, read, roster and close.
 5. **Checked by real use, not by hand (decided 2026-11-25).** The first real projects on the app exercise these paths: more than one worker at a time (naming), spinoff, `dump` / `reset --handoff`, `recover`, `--resume` keeping its session id, and distilling an agent while workers keep running. Worst case, one of them breaks and an agent does that step by hand with `hc`/`herdr-app do`. No work is lost: the predecessor stays alive in a takeover, and dump leaves stuck agents running. Fix bugs as they show up.
-6. **Later, only if wanted: list on herdr.dev.** A herdr.dev install copies only `mods/<name>/`, not the repo root, so the mod's `init()` would clone the repo at a pinned tag and run `setup.sh`. A listing also needs `RECIPE.md`, `preview.png` and the `herdr-mod` repo topic.
+6. **Install from one place (in progress, 2026-11-25).** Design below, under *Install and upgrade*. Listing on herdr.dev (the `herdr-mod` topic and `preview.png`) stays out until it's wanted.
 
 `DOG-` isn't used for this work. The steps are sequential, so there's no parallel work for the orchestration to manage, and a dog-food run tests coordination, not the transport layer.
 
 ## How to run it
 
 One orchestrating session, starting fresh from this file, plus one fresh worker per step (step 1 split by file). Each worker reports with `hc send` when done or stuck. The orchestrator reviews `git diff` and runs the step's check, rather than reading the worker's screen. The user approves commits and pushes. This is the small staffing from [mode.md](mode.md) in practice.
+
+## Install and upgrade
+
+One home for the code: **`~/.local/share/project-orchestration`, a git clone at a release tag.** Every installed link points into it, whether the plugin, the mod or both are installed. The dev repo is a working copy that nothing links to, so running projects change only when a release is tagged.
+
+| Script | Run by | Does |
+|---|---|---|
+| `scripts/plugin-setup.sh` | the plugin's build hook | Brings the share clone forward to at least the plugin checkout's version (clone if missing; fetch and check out that tag or commit; never backwards), then runs the clone's `scripts/setup.sh`. |
+| `mods/project-orchestration/mod-setup.sh` | the mod's `init()` | Brings the share clone forward to the newest release tag (clone if missing; fetch at most once a day; never backwards). If the clone's mod files are newer, copies them over its own folder. Then runs the clone's `scripts/setup.sh`. It ships inside the mod folder, because a herdr.dev install copies only that folder. |
+| `scripts/setup.sh` | only the two above, only from inside the share clone | Normalizes: refuses to run from anywhere else. Links the CLI, skills, guide and context-guard hook from the clone, and reports any link that pointed elsewhere (an old plugin checkout, a dev repo) before repointing it. On a version change, sends the upgrade notice to running orchestrators. |
+
+- **Releasing** is: bump `version` in `herdr-plugin.toml`, then tag `v<version>` and push. Mod users pick it up on the next app start. Plugin users pick it up with `herdr plugin update`. Both end at the same clone, so an older install never rolls back a newer one.
+- **Developing:** call `scripts/project.sh` by its full path, the way the dry runs did. To work on the panel, symlink the repo's mod folder as `project-orchestration-dev`. Its `init()` sees that it sits in a git work tree and skips setup.
+- **`RECIPE.md`** (repo root) is the brief the app's add flow reads. Up front it says that the mod clones this repo into `~/.local/share`, runs `git`, `hc` and `herdr-app do`, links a `project` command and skills, and installs a global Claude Code hook. It gives the setup command for a manual install.
+- If the panel can't find the share clone, it says so and shows the setup command, instead of failing silently.
 
 ## Open
 

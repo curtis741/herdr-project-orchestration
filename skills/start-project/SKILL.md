@@ -281,7 +281,7 @@ worker_name=$(project next-worker)
 
 This returns NATO phonetic names in order: alpha, bravo, charlie, etc., wrapping to alpha2 after zulu. Names are never reused within a project.
 
-The spawn itself is in 4c, because the boot prompt is the spawn's first task. `--label` is the tab label and `--title` the session name shown in the terminal title. `<focus>` is 2–4 words from the ticket summary describing what this worker is doing (e.g. `charlie — fee column backfill`), so the user can tell workers apart at a glance. Reuse the same name whenever you restart or resume this worker.
+The spawn itself is in 4c, because the boot prompt is the spawn's first task. `--label` is the tab label and `--title` the session name shown in the terminal title. `<focus>` is 2–4 words from the ticket summary describing what this worker is doing (e.g. `charlie — widget column backfill`), so the user can tell workers apart at a glance. Reuse the same name whenever you restart or resume this worker.
 
 The Claude session starts scoped to `<repo_path>` — it shares memory, `/resume`, and session list with the primary checkout.
 

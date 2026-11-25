@@ -1994,7 +1994,7 @@ cmd_rename() {
 # delivered, role registered. The only way skills create an agent.
 #   --cwd DIR       working dir (default $PWD)
 #   --label TEXT    tab label (default <role>)
-#   --title TEXT    agent session name (default <role>), e.g. "alpha — fee backfill"
+#   --title TEXT    agent session name (default <role>), e.g. "alpha — widget column backfill"
 #   --resume        resume the role's stored session instead of starting fresh
 #   --takeover      the role is live and stays routed to the old agent until the
 #                   successor runs 'project register'; reach the old one as <role>@prev

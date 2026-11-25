@@ -1,7 +1,6 @@
 // Project orchestration: a live roster of each project's agents (from the project=/role=
 // labels the hc backend puts on every terminal, plus the project state file for tickets),
-// a Start dialog, a Dump button, and install/upgrade of the CLI + skills (scripts/setup.sh)
-// when the plugin version changes. All actions go through the `project` CLI; nothing here
+// a Start dialog, a Dump button, and install/upgrade of the CLI + skills (mod-setup.sh → the share clone). All actions go through the `project` CLI; nothing here
 // re-implements it. One mod, two views: the panel, and (props.view === "start") the dialog.
 
 import { View, div } from "gpui-kit";
@@ -17,19 +16,23 @@ const PROJECT_BIN = () => `${home()}/.local/bin/project`;
 const FIXED = ["orchestrator", "librarian", "watcher", "researcher"];
 const roleRank = (r) => { const i = FIXED.indexOf(r); return i < 0 ? FIXED.length : i; };
 
-// Runs scripts/setup.sh (found through the mod folder's symlink) when the plugin version in
-// herdr-plugin.toml differs from the one setup.sh last recorded. setup.sh keeps that record
-// itself and sends the upgrade note to live orchestrators, so we only decide *whether* to run it.
-// PROJECT_BACKEND=hc so that note goes through the hc backend.
+// Install/upgrade: runs mod-setup.sh from this mod's folder. A mod can't ask for its own
+// folder name (an add flow may rename it), so we look through mods/ for folders carrying
+// mod-setup.sh with this mod's marker line and run each one: they're all copies of this mod,
+// and the work is idempotent. mod-setup.sh skips a development copy itself (a mod folder
+// inside a git work tree) and prints, as its last line, `dev` | `current <v>` |
+// `installed <old> <new>`. We add `folder <path>` lines so the panel can show the command.
+// PROJECT_BACKEND=hc so the upgrade note setup.sh sends goes through the hc backend.
 const INSTALL_SH = `
-root="$(cd -P "$1" 2>/dev/null && cd ../.. && pwd -P)" || { echo "no-repo"; exit 0; }
-[ -f "$root/scripts/setup.sh" ] && [ -f "$root/herdr-plugin.toml" ] || { echo "no-repo"; exit 0; }
-new=$(grep '^version' "$root/herdr-plugin.toml" | sed 's/.*"\\(.*\\)"/\\1/')
-vf="\${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/herdr-plugins.project-orchestration/.installed-version"
-old=$(cat "$vf" 2>/dev/null || true)
-if [ "$old" = "$new" ]; then echo "current $new"; exit 0; fi
-PROJECT_BACKEND=hc bash "$root/scripts/setup.sh" || exit $?
-echo "installed \${old:-none} $new"
+found=0
+for d in "$1"/*/; do
+  s="\${d}mod-setup.sh"
+  [ -f "$s" ] && head -n 2 "$s" | grep -q 'project-orchestration mod-setup' || continue
+  found=1
+  echo "folder \${d%/}"
+  bash "$s" || { echo "failed in \${d%/}" >&2; exit 1; }
+done
+[ "$found" = 1 ] || echo "nofolder"
 `;
 
 const stateOf = (s) => (s === "error" ? "blocked" : s || "idle");
@@ -75,6 +78,7 @@ export default class ProjectOrchestration extends View {
     this.loading = new Set();
     this.confirm = null; // project awaiting "dump?" confirmation
     this.busy = new Set(); // projects with a dump running
+    this.setupErr = null; // set when the share clone is missing or setup failed: {msg, cmd}
     cx.timer.every(10000, (cx) => this.reload(cx));
     if (!checking()) this.install(cx);
   }
@@ -82,17 +86,30 @@ export default class ProjectOrchestration extends View {
   // --- install / upgrade -------------------------------------------------------------
   install(cx) {
     cx.spawn(async (cx) => {
+      let folder = `${appHome()}/mods/${MOD}`;
+      const fail = (msg) => {
+        this.setupErr = { msg, cmd: `bash ${folder}/mod-setup.sh` };
+        notify({ title: "Project orchestration setup failed", body: msg, level: "error" });
+        cx.notify();
+      };
       try {
-        const r = await exec("bash", ["-c", INSTALL_SH, "_", `${appHome()}/mods/${MOD}`], { timeout: 120000 });
-        const last = r.stdout.trim().split("\n").pop() ?? "";
-        if (r.code !== 0) throw new Error(tail(r.stderr || r.stdout));
+        const r = await exec("env", ["PROJECT_BACKEND=hc", "bash", "-c", INSTALL_SH, "_", `${appHome()}/mods`], { timeout: 180000 });
+        const lines = r.stdout.trim().split("\n");
+        folder = lines.filter((l) => l.startsWith("folder ")).pop()?.slice(7) ?? folder;
+        if (r.code !== 0) return fail(tail(r.stderr || r.stdout));
+        const last = lines.filter((l) => /^(installed|current) /.test(l)).pop() ?? lines.pop() ?? ""; // a dev copy beside a real one must not hide its result
+        const clone = await exec("test", ["-f", `${home()}/.local/share/project-orchestration/scripts/setup.sh`]);
+        if (last.startsWith("dev")) return; // development copy: nothing installed on purpose
+        if (last === "nofolder" || clone.code !== 0) return fail("The share clone (~/.local/share/project-orchestration) is missing.");
+        this.setupErr = null;
+        cx.notify();
         if (last.startsWith("installed")) {
           const [, from, to] = last.split(" ");
           notify({ title: "Project orchestration", level: "success",
             body: from === "none" ? `Installed v${to}` : `Upgraded v${from} → v${to}` });
         }
       } catch (e) {
-        notify({ title: "Project orchestration setup failed", body: String(e.message ?? e), level: "error" });
+        fail(String(e.message ?? e));
       }
     });
   }
@@ -245,6 +262,10 @@ export default class ProjectOrchestration extends View {
         .child(div().flex_1().text_size(13).font_semibold().child("Projects"))
         .child(mini("po-start-btn", "+ Start", t.accent, () =>
           openOverlay({ mod: MOD, props: { view: "start" }, kind: "dialog", width: 420, height: 330 }))))
+      .when(Boolean(this.setupErr), (e) => e.child(v_flex().px(12).py(6).gap(4)
+        .child(div().text_size(12).text_color(t.blocked).child(`Setup problem: ${this.setupErr.msg}`))
+        .child(div().text_size(11).text_color(t.dim).child("Run in a terminal, then restart the app:"))
+        .child(div().id("po-setup-cmd").text_size(11).text_color(t.muted).child(this.setupErr.cmd))))
       .child(v_flex().flex_1().overflow_y_scrollbar()
         .when(list.length === 0, (e) => e.child(div().px(12).py(6).text_size(12).text_color(t.dim)
           .child("No running projects. + Start, or: project start <epic-key> \"<label>\"")))

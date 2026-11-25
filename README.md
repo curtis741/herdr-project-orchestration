@@ -27,11 +27,26 @@ The result is consistent quality from the first ticket to the last. Works with a
 
 ### Install
 
+Two ways in, one result: the code lives in a single git clone, `~/.local/share/project-orchestration`, and every link (the `project` command, skills, guide, context-guard hook) points into it.
+
+**Classic Herdr (plugin):**
+
 ```bash
 herdr plugin install curtis741/herdr-project-orchestration
 ```
 
-The build step symlinks the `project` CLI and all skills automatically. Updates propagate through the symlinks — `herdr plugin update` is all you need.
+The build step brings the clone forward to this plugin's version (never backwards) and links everything. `herdr plugin update` upgrades it.
+
+**Herdr app (mod):** ask the app to add `https://github.com/curtis741/herdr-project-orchestration` (it reads `RECIPE.md`, which lists what the mod does up front). On each app start the mod moves the clone to the newest release tag (checking at most once a day) and relinks. Without the add flow:
+
+```bash
+git clone https://github.com/curtis741/herdr-project-orchestration ~/.local/share/project-orchestration
+git -C ~/.local/share/project-orchestration checkout --quiet --detach "$(git -C ~/.local/share/project-orchestration tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+bash ~/.local/share/project-orchestration/scripts/setup.sh
+cp -R ~/.local/share/project-orchestration/mods/project-orchestration ~/.config/herdr-app/mods/   # the panel; optional
+```
+
+Installing both is fine: whichever is newer wins, and an older install never rolls the clone back. Links that used to point at another checkout are reported and repointed.
 
 ### Run a project
 
