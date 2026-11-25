@@ -154,10 +154,10 @@ elif [[ "$old_version" != "$new_version" ]]; then
       show && /^- / { print }
     ' "$PLUGIN_DIR/CHANGELOG.md")
   fi
-  [[ -n "$changes" ]] || changes="(no CHANGELOG entries found for this range)"
 
-  # Notify running orchestrators (through the project CLI — no direct herdr calls)
-  if [[ -d "$PROJECTS_DIR" ]]; then
+  # Notify running orchestrators (through the project CLI — no direct herdr calls);
+  # nothing to say when the CHANGELOG has no entries for this range
+  if [[ -n "$changes" && -d "$PROJECTS_DIR" ]]; then
     for state_file in "$PROJECTS_DIR"/*.json; do
       [[ -f "$state_file" ]] || continue
       project_name=$(jq -r '.project // empty' "$state_file" 2>/dev/null || true)

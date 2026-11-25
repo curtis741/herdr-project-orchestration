@@ -30,17 +30,18 @@ A panel docked on the left of the window, with Spaces and Agents, listing every 
 A column docked left, 300px wide, titled "Projects" (`mod.json`: `place: left`, `size: 300`).
 - Header row: "Projects" (13px, semibold) and a `+ Start` button on the right (accent color, 11px).
 - If setup failed or the share clone is missing: a block under the header with "Setup problem: …" in the blocked color, a line "Run in a terminal, then restart the app:", and the exact command (`bash <mod folder>/mod-setup.sh`).
-- One section per project, sorted by name: a `▾`/`▸` toggle, the project name with its agent count (12px, semibold, e.g. `demo-003 (4)`) and a `Dump` button on the right; when expanded, under it one row per agent: an 8px status dot, the role (orchestrator, librarian, watcher, researcher first, then workers alphabetically), the current ticket if any (11px, dim), and the status word in the status color.
+- One section per project, sorted by name: a `▾`/`▸` toggle, the project name with its agent count (12px, semibold, e.g. `demo-003 (4)`) and a `Dump` button on the right; when expanded, under it one row per running agent (a live terminal of its own; the count counts only these; hosted roles never get a row): an 8px status dot, the role (orchestrator, librarian, watcher, researcher first, then workers alphabetically), the current ticket if any (11px, dim), and the status word in the status color.
+- Under a project's running agents, if any agent is stopped, finished or gone (e.g. a worker after `project stop <w> --close`), a dim `Done (n)` row, collapsed by default; expanded, it lists them muted, each with its last status word (`stopped`, `unreachable`).
 - Below the running projects, a dim "Paused (n)" section, collapsed by default: projects whose state file is in `~/.herdr/projects` but that have no live terminal and are not finished (for example after `dump`), each as `name (agents)`; clicking one selects its space.
 - With no projects: "No running projects. + Start, or: project start <epic-key> "<label>"".
 
 ## How it behaves
 
-- Status per agent: `working` (accent-colored dot pulsing between 35% and 100% opacity, 1.2s), `blocked` (blocked color; an `error` terminal also shows as blocked), `done`, `idle`; a role in the project state with no live terminal shows `stopped` or `unreachable` and its name is muted.
+- Status per agent: `working` (accent-colored dot pulsing between 35% and 100% opacity, 1.2s), `blocked` (blocked color; an `error` terminal also shows as blocked), `done`, `idle`; a role in the project state with no live terminal of its own is not a running agent: it goes under `Done (n)` with `stopped` or `unreachable`, muted.
 - Clicking an agent row focuses that terminal's pane, or peeks it if it isn't shown in a pane. Clicking a project name selects its space.
 - `+ Start` opens a 420x330 dialog: epic key (letters, digits, `-_.`), label (defaults to the key), folder (defaults to the focused terminal's folder, `Choose…` opens the folder picker), Cancel/Start, Esc closes. Start runs `project start <key> <label>` in that folder, then selects the new space.
 - `Dump` asks "stop all agents?" with Yes/No; Yes runs `project --project <name> dump`, shows "dumping…", and toasts the result.
-- Clicking a project's toggle (or the "Paused" header) collapses or expands it. Projects start expanded, Paused starts collapsed; the choice is remembered per viewer (`localStorage`, key `po-collapsed`) and survives restarts.
+- Clicking a project's toggle (or the "Paused" header, or a `Done (n)` row) collapses or expands it. Projects start expanded, Paused and every Done row start collapsed; the choice is remembered per viewer (`localStorage`, key `po-collapsed`) and survives restarts.
 - The roster and the list of state files refresh every 10 seconds.
 - On app start (not during `herdr-app check`): runs `mod-setup.sh`. A toast says "Installed vX" or "Upgraded vA → vB" when the version changed, and an error toast plus the panel block when setup fails.
 
@@ -73,4 +74,5 @@ A column docked left, 300px wide, titled "Projects" (`mod.json`: `place: left`, 
 - A copy of the mod folder inside a git work tree runs no setup.
 - With the clone removed and the network off, the panel shows "Setup problem" and the `bash …/mod-setup.sh` command.
 - A project started with `project start DEMO-001 "Tour"` shows its agents in the panel with live status; clicking a row focuses its terminal.
+- After `project stop <worker> --close`, the worker leaves the running rows, the header count drops, and `Done (n)` appears, collapsed; expand it, restart the app: it is still expanded.
 - With that project dumped, it moves from its section to "Paused"; expand Paused to see it. Collapse a project, restart the app: it is still collapsed.

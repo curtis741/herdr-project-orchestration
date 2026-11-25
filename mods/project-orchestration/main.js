@@ -37,6 +37,7 @@ done
 `;
 
 const PAUSED = "\u0000paused";
+const DONE = "\u0000done:"; // + project name: that project's collapsed "Done" row
 // Paused = `project dump` wrote paused_at (cleared when an agent registers or spawns again), `project close`
 // didn't write closed_at, and the project lives in an app space (ids "sp…"; classic workspaces are "w…"
 // and aren't this panel's business). Projects with a live terminal are listed as running instead.
@@ -46,7 +47,8 @@ const isPaused = (st) => Boolean(st && st.paused_at && !st.closed_at
 const stateOf = (s) => (s === "error" ? "blocked" : s || "idle");
 
 // project -> { workspace, rows: [{role, terminal, name, status, ticket}] }, from live terminals,
-// topped up with state-file roles that have no live terminal (stopped, or gone).
+// topped up with state-file roles that have no live terminal (stopped, or gone). Hosted roles
+// (hosted_by, or a stopped one still on its host's terminal) get no row until promoted.
 function roster(files) {
   const out = new Map();
   for (const t of terminals()) {
@@ -62,10 +64,15 @@ function roster(files) {
     const live = new Set(entry.rows.map((r) => r.role));
     for (const r of entry.rows) r.ticket = st?.agents?.[r.role]?.current_ticket;
     for (const [role, a] of Object.entries(st?.agents ?? {})) {
-      if (live.has(role)) continue;
+      if (live.has(role) || a.hosted_by) continue;
+      // A stopped hosted role is un-hosted but keeps its host's pane_id: still not its own agent.
+      if (a.pane_id && entry.rows.some((r) => r.terminal === a.pane_id && r.role !== role)) continue;
       entry.rows.push({ role, status: a.stopped ? "stopped" : "unreachable", ticket: a.current_ticket });
     }
-    entry.rows.sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.role.localeCompare(b.role));
+    const byRole = (a, b) => roleRank(a.role) - roleRank(b.role) || a.role.localeCompare(b.role);
+    // Running = has a live terminal of its own; everything else is "Done" (stopped, finished, gone).
+    entry.done = entry.rows.filter((r) => !r.terminal).sort(byRole);
+    entry.rows = entry.rows.filter((r) => r.terminal).sort(byRole);
   }
   return [...out.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 }
@@ -130,7 +137,8 @@ export default class ProjectOrchestration extends View {
   loadCollapsed() {
     try { return JSON.parse(localStorage.getItem("po-collapsed") ?? "{}") ?? {}; } catch { return {}; }
   }
-  isCollapsed(key) { return key in this.collapsed ? this.collapsed[key] : key === PAUSED; }
+  // Paused and every project's Done row start collapsed.
+  isCollapsed(key) { return key in this.collapsed ? this.collapsed[key] : key === PAUSED || key.startsWith(DONE); }
   toggle(key, cx) {
     this.collapsed[key] = !this.isCollapsed(key);
     try { localStorage.setItem("po-collapsed", JSON.stringify(this.collapsed)); } catch {}
@@ -295,7 +303,20 @@ export default class ProjectOrchestration extends View {
             .child(div().text_size(11).text_color(t.blocked).child("stop all agents?"))
             .child(mini(`po-dump-yes-${p}`, "Yes", t.blocked, (_e, cx) => this.dump(p, cx)))
             .child(mini(`po-dump-no-${p}`, "No", t.muted, () => { this.confirm = null; cx.notify(); }))))
-        .when(open, (e) => e.children(entry.rows.map((r) => row(p, r))));
+        .when(open, (e) => e.children(entry.rows.map((r) => row(p, r))))
+        .when(open && entry.done.length > 0, (e) => {
+          const dk = DONE + p;
+          const dopen = !this.isCollapsed(dk);
+          return e.child(v_flex().id(`po-done-${p}`)
+            .child(h_flex().id(`po-done-head-${p}`).items_center().px(12).py(4).gap(4).cursor_pointer()
+              .on_click((_e, cx) => this.toggle(dk, cx))
+              .child(div().w(14).text_size(11).text_color(t.dim).child(dopen ? "▾" : "▸"))
+              .child(div().flex_1().text_size(11.5).text_color(t.dim).child(`Done (${entry.done.length})`)))
+            .when(dopen, (x) => x.children(entry.done.map((r) =>
+              h_flex().id(`po-done-${p}-${r.role}`).gap(8).items_center().px(12).py(3).pl(26)
+                .child(div().flex_1().truncate().text_size(12).text_color(t.dim).child(r.role))
+                .child(div().w(62).text_size(11).text_color(t.dim).child(r.status))))));
+        });
     };
 
     const pausedSection = () => {
@@ -309,7 +330,7 @@ export default class ProjectOrchestration extends View {
           const ws = this.files[n]?.workspace_id;
           return div().id(`po-paused-${n}`).px(12).py(4).pl(26).truncate().text_size(12).text_color(t.dim)
             .when(Boolean(ws), (x) => x.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => run("space.select", { id: ws })))
-            .child(`${n} (${Object.keys(this.files[n].agents ?? {}).length})`);
+            .child(`${n} (${Object.values(this.files[n].agents ?? {}).filter((a) => !a.hosted_by).length})`);
         })));
     };
 
