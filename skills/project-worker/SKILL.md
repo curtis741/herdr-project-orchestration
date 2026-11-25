@@ -139,7 +139,7 @@ Use GitHub MCP tools to open a draft PR:
   ---
   <project-name> - <role>
   ```
-  `<project-name>` is `$HERDR_PROJECT` (e.g. `app-1234 - bravo`). Spinoffs and follow-up PRs get the same footer. If you take over another worker's PR, add your own footer line below theirs.
+  `<project-name>` is the output of `project name` (e.g. `app-1234 - bravo`). Spinoffs and follow-up PRs get the same footer. If you take over another worker's PR, add your own footer line below theirs.
 - Always draft (`draft: true`)
 - Target: `main` — unless you merged another worker's branch into yours, then target that branch instead so the PR diff only shows your incremental changes
 

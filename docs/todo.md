@@ -16,7 +16,16 @@ Small items noticed along the way and parked for later. Bigger ideas go in [road
 
 - **The dry-run harness says "steps 3-7"** in the Step 4 assignment, but the worker boot prompt has 6 steps. fake-001 noticed and stopped at 6. Also, Step 5's "librarian → you: ACK" overstates it: the librarian ACKs in its own pane.
 
+- **The tour says "A project is already initialized, so I'll reuse it"** when it finds the project `project start` just created. It reads like leftover state. Reword it in guided-tour and start-project to something like "Using the project Start created (`<name>`)".
+
+- **The tour worker sends READY twice.** `project register` sends one automatically, and the worker's boot text sends its own. Drop the manual one from the boot text.
+
 ## Other
 
 - **The upgrade notice in `setup.sh` tells the orchestrator to have agents reload their skills.** That's a fan-out, which DESIGN.md § "Plugin updates are orchestrator-only" rules out. Reword it to: tell the user what changed and let them decide which agents to recycle.
+- **Send the CHANGELOG entry on upgrade**, not just "upgraded vA → vB". CLAUDE.md § Releasing says the entries are what running orchestrators get.
+- **Mod panel buttons for recycle and spinoff.** There's no `project recycle` (a DISTILL takeover is agent-driven today). Spinoff needs a dialog for title, brief and repo, and a defined requester when it's called from outside an agent.
+- **Mod panel placement:** dock the Projects panel on the left with Spaces and Agents, not on the right (`mod.json` `place`).
+- **Mod panel: collapsible projects.** Each project is a header with its agent count, collapsed or expanded, e.g. `demo-003 (4) [+/-]`.
+- **Mod panel: paused projects.** The panel lists only projects with live terminals, so a project vanishes after `dump`. Add a section listing paused projects from their state files.
 - **Could the watcher be pure shell?** CI polling is mechanical: `gh` checks per PR, then `project prompt <worker>` on failure. A shell loop would cost no tokens while idle. Open question: what judgment does the watcher apply today that a script can't?

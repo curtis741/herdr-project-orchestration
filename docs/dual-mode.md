@@ -15,7 +15,7 @@ The skills, the signal protocol and the `project` CLI interface stay the same. O
 The Herdr app has no plugin system. A mod is the only way to package for it. Mods are trusted code: they can run any program (`exec`, `hc`), call any app command (`run`), and read and write files. So a mod can carry the whole system:
 - **A panel** in place of `[[actions]]`: a live roster with agent states and click-to-focus, plus recycle, dump and spinoff buttons.
 - **A start dialog** that asks for the epic key and label. Plugin actions can't take arguments, which is why "Start a project" today only prints usage.
-- **Install and upgrade:** `init()` runs `setup.sh` when the mod's version changes, guarded by `checking()`, and sends the CHANGELOG entry to the running orchestrator. This replaces the build hook and the `herdr plugin update` flow.
+- **Install and upgrade:** `init()` runs `setup.sh` when the mod's version changes, guarded by `checking()`. `setup.sh` then tells the running orchestrator about the upgrade. Today it sends a fixed "upgraded vA → vB" note, not the CHANGELOG entry (see todo.md). This replaces the build hook and the `herdr plugin update` flow.
 
 The app's own guide, written by the app on every start, is `~/.config/herdr-app/AGENTS.md`, with the full API in `herdr.d.ts` and `gpui-kit.d.ts` beside it. `hc --skill` and `herdr-app --skill` print the agent manuals.
 
@@ -94,6 +94,15 @@ One orchestrating session, starting fresh from this file, plus one fresh worker 
 - Steps 1–2 done (`eb08eec`, `925ddaf`). Step 3 passed `dry-run-project` on both the app (hc) and classic.
 - **Installed symlinks point at this repo** (since step 3): `~/.local/bin/project`, `~/.local/bin/project-context-guard`, and `~/.claude/skills/{start-project,project-worker,dry-run-project,guided-tour,PROJECT_GUIDE.md}`. `hc run` can't pass env, so agents spawned on hc run whichever `project` is on PATH, and the hc backend can only be tested this way. Undo with `herdr plugin update`, or by re-running the plugin's setup.
 
+- Step 3 is committed (`007ddd2`). Step 4 passed `DEMO-` on the app, started from the mod's Start dialog. Everything stayed in one space, and the full signal chain ran, including the automatic TASK_READY → worker spawn.
+
+### Step 4 decisions (mod)
+
+- The mod is at `mods/project-orchestration/` and runs as a dev symlink from `~/.config/herdr-app/mods/`. The panel builds its roster from the `project=`/`role=` labels on terminals, plus the state files. It has a Dump button and a Start dialog (key, label, folder). `init()` runs `setup.sh` when the version in `herdr-plugin.toml` differs from the installed one.
+- When the mod runs `project`, there is no `HC_TERMINAL_ID` in its environment, so the mod calls it as `env PROJECT_BACKEND=hc project …`.
+- Skills get the project key from `project name`, never from `$HERDR_PROJECT`. On hc, that variable is filled from the terminal label.
+- The guided tour follows one rule: whoever needs the user asks, with AskUserQuestion, in their own pane. The orchestrator asks only orchestration questions.
+
 ### Step 3 decisions (hc backend)
 
 - **Backend choice:** `HC_TERMINAL_ID` set and `HERDR_ENV` unset → hc; otherwise classic. `PROJECT_BACKEND=hc|herdr` overrides.
@@ -106,6 +115,7 @@ One orchestrating session, starting fresh from this file, plus one fresh worker 
 ### Open after step 3 (for steps 4–5)
 
 - `project init` without a workspace id leaves `workspace_id` empty on hc: a hand-started orchestrator in the app can't spawn. It should probably default to `be_self_workspace`.
-- `hc send` to a `blocked` agent refuses without `--force`, so a NEED or READY signal to a blocked orchestrator is dropped silently.
+- ~~`hc send` to a `blocked` agent refuses without `--force`, so signals were lost silently.~~ Fixed in step 4: a prompt to a blocked agent goes into a queue for that agent. A `dlv-<target>` hc terminal delivers it once the agent unblocks, in order. The signal log records QUEUED, DELIVERED and DROPPED.
+- **Classic has the same problem, still open:** `herdr agent prompt` rejects a blocked agent, so the signal is lost. And `be_prompt` sends `ctrl+s` first regardless, so it reaches an open AskUserQuestion. What `ctrl+s` does to that menu hasn't been verified.
 - `project close` leaves the space's finished root shell in `hc ls --all`.
 - Not exercised on hc yet: spinoff, `dump`, `reset --handoff`, `recover`, takeover. These are step 5.

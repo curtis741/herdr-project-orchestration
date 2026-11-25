@@ -115,7 +115,8 @@ Commands:
   read <role> [--lines N]          Read an agent's recent pane output (non-blocking)
   roster                           Print the current role → pane ID map
   status [role]                    Agent states for all roles, or one word (working|idle|blocked|done|stopped|unreachable) for a role
-  info                             Print epic key and workspace ID
+  info                             Print epic key and workspace ID (JSON)
+  name                             Print the current project's key; exit 1 if there is none
   research <question>               Ask a research question (async, answer comes back via prompt)
   punt "<problem>"                 Hand a suspected problem to the researcher to own (no answer comes back)
   spinoff "<title>" [--notify] [--repo <path>] <<brief
@@ -720,6 +721,12 @@ cmd_info() {
   local f
   f="$(ensure_state)"
   jq '{project, workspace_id, agent_count: (.agents | length)}' "$f"
+}
+
+# The current project's key (backend-neutral; skills use this instead of reading env vars).
+cmd_name() {
+  [[ -n "${HERDR_PROJECT:-}" ]] || exit 1
+  echo "$HERDR_PROJECT"
 }
 
 # Route a research request: researcher if registered and not stopped, otherwise
@@ -2202,6 +2209,7 @@ case "$cmd" in
   roster)     cmd_roster ;;
   status)     cmd_status "$@" ;;
   info)       cmd_info ;;
+  name)       cmd_name ;;
   research)   cmd_research "$@" ;;
   punt)       cmd_punt "$@" ;;
   spinoff)    cmd_spinoff "$@" ;;

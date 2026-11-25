@@ -95,7 +95,7 @@ This keeps ticket management off the orchestrator (stays lightweight) and off wo
 
 ### `project` CLI (`~/.local/bin/project`)
 
-Standalone shell script. State file at `~/.herdr/projects/<project-name>.json`. Single writer (orchestrator), many readers (all agents). Project name is injected via the `HERDR_PROJECT` env var, which `project spawn` sets on every agent it starts.
+Standalone shell script. State file at `~/.herdr/projects/<project-name>.json`. Single writer (orchestrator), many readers (all agents). Agents get the project name from `project name` (exits 1 if none); on classic herdr it comes from the `HERDR_PROJECT` env var that `project spawn` sets, on the hc backend from the terminal's `project` label.
 
 Everything an agent needs from the terminal layer goes through these subcommands, addressed by role. No agent ever handles a pane ID, workspace ID, tab ID or terminal name.
 

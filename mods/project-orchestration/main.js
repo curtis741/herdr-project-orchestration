@@ -1,0 +1,253 @@
+// Project orchestration: a live roster of each project's agents (from the project=/role=
+// labels the hc backend puts on every terminal, plus the project state file for tickets),
+// a Start dialog, a Dump button, and install/upgrade of the CLI + skills (scripts/setup.sh)
+// when the plugin version changes. All actions go through the `project` CLI; nothing here
+// re-implements it. One mod, two views: the panel, and (props.view === "start") the dialog.
+
+import { View, div } from "gpui-kit";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { exec, home, appHome, checking, terminals, agents, run, theme, props, notify,
+         readTextFile, openOverlay, closeOverlay, pickFolder, focused } from "herdr";
+
+const MOD = "project-orchestration";
+const PROJECT_BIN = () => `${home()}/.local/bin/project`;
+// Every exec of the CLI below is `env PROJECT_BACKEND=hc project …`: the mod's exec has no
+// HC_TERMINAL_ID, so without it the CLI would pick the classic backend.
+
+const FIXED = ["orchestrator", "librarian", "watcher", "researcher"];
+const roleRank = (r) => { const i = FIXED.indexOf(r); return i < 0 ? FIXED.length : i; };
+
+// Runs scripts/setup.sh (found through the mod folder's symlink) when the plugin version in
+// herdr-plugin.toml differs from the one setup.sh last recorded. setup.sh keeps that record
+// itself and sends the upgrade note to live orchestrators, so we only decide *whether* to run it.
+// PROJECT_BACKEND=hc so that note goes through the hc backend.
+const INSTALL_SH = `
+root="$(cd -P "$1" 2>/dev/null && cd ../.. && pwd -P)" || { echo "no-repo"; exit 0; }
+[ -f "$root/scripts/setup.sh" ] && [ -f "$root/herdr-plugin.toml" ] || { echo "no-repo"; exit 0; }
+new=$(grep '^version' "$root/herdr-plugin.toml" | sed 's/.*"\\(.*\\)"/\\1/')
+vf="\${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/herdr-plugins.project-orchestration/.installed-version"
+old=$(cat "$vf" 2>/dev/null || true)
+if [ "$old" = "$new" ]; then echo "current $new"; exit 0; fi
+PROJECT_BACKEND=hc bash "$root/scripts/setup.sh" || exit $?
+echo "installed \${old:-none} $new"
+`;
+
+const stateOf = (s) => (s === "error" ? "blocked" : s || "idle");
+
+// project -> { workspace, rows: [{role, terminal, name, status, ticket}] }, from live terminals,
+// topped up with state-file roles that have no live terminal (stopped, or gone).
+function roster(files) {
+  const out = new Map();
+  for (const t of terminals()) {
+    const L = t.labels ?? {};
+    if (!L.project || !L.role || L.role === "deliver") continue; // deliver = queue deliverer, not an agent
+    if (t.state && t.state !== "live") continue;
+    if (!out.has(L.project)) out.set(L.project, { rows: [] });
+    out.get(L.project).rows.push({ role: L.role, terminal: t.address, name: t.name, status: stateOf(t.status) });
+  }
+  for (const [p, entry] of out) {
+    const st = files[p];
+    entry.workspace = st?.workspace_id;
+    const live = new Set(entry.rows.map((r) => r.role));
+    for (const r of entry.rows) r.ticket = st?.agents?.[r.role]?.current_ticket;
+    for (const [role, a] of Object.entries(st?.agents ?? {})) {
+      if (live.has(role)) continue;
+      entry.rows.push({ role, status: a.stopped ? "stopped" : "unreachable", ticket: a.current_ticket });
+    }
+    entry.rows.sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.role.localeCompare(b.role));
+  }
+  return [...out.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+// A terminal the app shows in a pane is focused there; a hidden one is peeked.
+function focusTerminal(address) {
+  if (agents().some((a) => a.address === address)) run("pane.focus", { terminal: address });
+  else run("terminal.peek", { terminal: address });
+}
+
+const tail = (s, n = 400) => (s ?? "").trim().split("\n").slice(-6).join("\n").slice(-n);
+
+export default class ProjectOrchestration extends View {
+  init(_props, cx) {
+    this.handle = cx.focus_handle();
+    if (props()?.view === "start") return this.initStart(cx);
+    this.files = {};
+    this.loading = new Set();
+    this.confirm = null; // project awaiting "dump?" confirmation
+    this.busy = new Set(); // projects with a dump running
+    cx.timer.every(10000, (cx) => this.reload(cx));
+    if (!checking()) this.install(cx);
+  }
+
+  // --- install / upgrade -------------------------------------------------------------
+  install(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("bash", ["-c", INSTALL_SH, "_", `${appHome()}/mods/${MOD}`], { timeout: 120000 });
+        const last = r.stdout.trim().split("\n").pop() ?? "";
+        if (r.code !== 0) throw new Error(tail(r.stderr || r.stdout));
+        if (last.startsWith("installed")) {
+          const [, from, to] = last.split(" ");
+          notify({ title: "Project orchestration", level: "success",
+            body: from === "none" ? `Installed v${to}` : `Upgraded v${from} → v${to}` });
+        }
+      } catch (e) {
+        notify({ title: "Project orchestration setup failed", body: String(e.message ?? e), level: "error" });
+      }
+    });
+  }
+
+  // --- panel data --------------------------------------------------------------------
+  load(project, cx) {
+    if (this.loading.has(project)) return;
+    this.loading.add(project);
+    cx.spawn(async (cx) => {
+      try {
+        const text = await readTextFile(`${home()}/.herdr/projects/${project}.json`);
+        this.files[project] = text ? JSON.parse(text) : null;
+      } catch { this.files[project] = null; }
+      this.loading.delete(project);
+      cx.notify();
+    });
+  }
+  reload(cx) {
+    for (const p of Object.keys(this.files)) { this.loading.delete(p); this.load(p, cx); }
+  }
+
+  dump(project, cx) {
+    this.confirm = null;
+    this.busy.add(project);
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("env", ["PROJECT_BACKEND=hc", PROJECT_BIN(), "--project", project, "dump"], { timeout: 600000 });
+        notify({ title: `${project}: dump ${r.code === 0 ? "done" : "incomplete"}`,
+          body: tail(r.code === 0 ? r.stdout : r.stderr || r.stdout), level: r.code === 0 ? "success" : "warning" });
+      } catch (e) {
+        notify({ title: `${project}: dump failed`, body: String(e.message ?? e), level: "error" });
+      }
+      this.busy.delete(project);
+      cx.notify();
+    });
+  }
+
+  // --- start dialog ------------------------------------------------------------------
+  initStart(cx) {
+    this.key = ""; this.label = ""; this.folder = focused()?.cwd ?? home();
+    this.err = ""; this.starting = false; this.focusIn = "key";
+    this.keyIn = InputState.new({ placeholder: "epic key, e.g. APP-1234" });
+    this.labelIn = InputState.new({ placeholder: "label (default: the key)" });
+    this.keyIn.on("change", (_e, cx) => { this.key = this.keyIn.value(); cx.notify(); });
+    this.labelIn.on("change", (_e, cx) => { this.label = this.labelIn.value(); cx.notify(); });
+    this.keyIn.on("submit", (_e, cx) => this.submit(cx));
+    this.labelIn.on("submit", (_e, cx) => this.submit(cx));
+    this.keyIn.on("focus", (_e, cx) => { this.focusIn = "key"; cx.notify(); });
+    this.labelIn.on("focus", (_e, cx) => { this.focusIn = "label"; cx.notify(); });
+    this.keyIn.focus();
+    cx.timer.after(600, () => this.keyIn.focus());
+  }
+
+  submit(cx) {
+    const key = this.key.trim();
+    if (this.starting) return;
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(key)) { this.err = "Epic key: letters, digits, - _ . only"; cx.notify(); return; }
+    this.starting = true; this.err = ""; cx.notify();
+    const label = this.label.trim() || key;
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("env", ["PROJECT_BACKEND=hc", PROJECT_BIN(), "start", key, label],
+          { cwd: this.folder, timeout: 180000 });
+        if (r.code !== 0) throw new Error(tail(r.stderr || r.stdout));
+        const ws = /workspace (\S+?)[,)]/.exec(r.stderr + r.stdout)?.[1];
+        closeOverlay(props().overlay);
+        notify({ title: `Started ${key}`, body: `Orchestrator running in "${label}"`, level: "success" });
+        if (ws) run("space.select", { id: ws });
+      } catch (e) {
+        this.err = String(e.message ?? e);
+        this.starting = false;
+        cx.notify();
+      }
+    });
+  }
+
+  renderStart() {
+    const t = theme();
+    const p = props();
+    const label = (s) => div().pt(14).pb(6).text_size(11.5).text_color(t.dim).child(s);
+    const field = (state, name) => Input.new(state).h(36).px(10).rounded(9).border_1()
+      .border_color(this.focusIn === name ? t.accent : t.input).bg(t.background).text_size(12.8).text_color(t.foreground);
+    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+      .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
+      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
+      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+    return v_flex().id("po-start").track_focus(this.handle)
+      .on_key_down((e, cx) => { if (e.key === "escape") { closeOverlay(p.overlay); cx.stop_propagation(); } })
+      .w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center()
+        .child(div().flex_1().text_size(15).font_semibold().child("Start a project"))
+        .child(div().text_size(11).text_color(t.dim).child("Esc")))
+      .child(label("Epic key"))
+      .child(field(this.keyIn, "key"))
+      .child(label("Label (space name)"))
+      .child(field(this.labelIn, "label"))
+      .child(label("Folder (where the orchestrator runs)"))
+      .child(h_flex().gap(8).items_center()
+        .child(div().flex_1().truncate().text_size(12).text_color(t.muted).child(this.folder))
+        .child(button("po-pick", "Choose…", false, (_e, cx) => {
+          cx.spawn(async (cx) => { const f = await pickFolder({ prompt: "Use" }); if (f) this.folder = f; cx.notify(); });
+        })))
+      .when(Boolean(this.err), (el) => el.child(div().pt(10).text_size(11.5).text_color(t.blocked).child(this.err)))
+      .child(h_flex().pt(20).gap(8).justify_end()
+        .child(button("po-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
+        .child(button("po-go", this.starting ? "Starting…" : "Start", true, (_e, cx) => this.submit(cx))));
+  }
+
+  // --- panel -------------------------------------------------------------------------
+  render(cx) {
+    if (props()?.view === "start") return this.renderStart();
+    const t = theme();
+    const list = roster(this.files);
+    for (const [p] of list) if (!(p in this.files)) { this.files[p] = null; this.load(p, cx); }
+    const color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.idle };
+    const mini = (id, text, fg, action) => div().id(id).px(6).py(2).rounded(5).text_size(11).text_color(fg)
+      .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(action).child(text);
+
+    const row = (p, r) => {
+      const dot = div().w(8).h(8).rounded(4).flex_none().bg(color[r.status] ?? t.dim);
+      const el = h_flex().id(`po-${p}-${r.role}-${r.terminal ?? "x"}`).gap(8).items_center().px(12).py(4)
+        .when(Boolean(r.terminal), (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => focusTerminal(r.terminal)))
+        .child(r.status === "working" ? dot.loop("opacity", { from: 0.35, to: 1, period: 1200 }) : dot)
+        .child(div().flex_1().truncate().text_size(12.5).text_color(r.terminal ? t.foreground : t.muted).child(r.role))
+        .when(Boolean(r.ticket), (e) => e.child(div().text_size(11).text_color(t.dim).child(r.ticket)))
+        .child(div().w(62).text_size(11).text_color(color[r.status] ?? t.dim).child(r.status));
+      return el;
+    };
+
+    const section = ([p, entry]) => {
+      const confirming = this.confirm === p;
+      return v_flex().id(`po-proj-${p}`).pb(8)
+        .child(h_flex().items_center().px(12).py(6).gap(4)
+          .child(div().id(`po-name-${p}`).flex_1().truncate().text_size(12).font_semibold().text_color(t.foreground)
+            .when(Boolean(entry.workspace), (e) => e.cursor_pointer().on_click(() => run("space.select", { id: entry.workspace })))
+            .child(p))
+          .when(this.busy.has(p), (e) => e.child(div().text_size(11).text_color(t.dim).child("dumping…")))
+          .when(!this.busy.has(p) && !confirming, (e) =>
+            e.child(mini(`po-dump-${p}`, "Dump", t.muted, () => { this.confirm = p; cx.notify(); })))
+          .when(confirming, (e) => e
+            .child(div().text_size(11).text_color(t.blocked).child("stop all agents?"))
+            .child(mini(`po-dump-yes-${p}`, "Yes", t.blocked, (_e, cx) => this.dump(p, cx)))
+            .child(mini(`po-dump-no-${p}`, "No", t.muted, () => { this.confirm = null; cx.notify(); }))))
+        .children(entry.rows.map((r) => row(p, r)));
+    };
+
+    return v_flex().id("po-root").size_full().bg(t.surface).text_color(t.foreground)
+      .child(h_flex().items_center().px(12).py(8).gap(8)
+        .child(div().flex_1().text_size(13).font_semibold().child("Projects"))
+        .child(mini("po-start-btn", "+ Start", t.accent, () =>
+          openOverlay({ mod: MOD, props: { view: "start" }, kind: "dialog", width: 420, height: 330 }))))
+      .child(v_flex().flex_1().overflow_y_scrollbar()
+        .when(list.length === 0, (e) => e.child(div().px(12).py(6).text_size(12).text_color(t.dim)
+          .child("No running projects. + Start, or: project start <epic-key> \"<label>\"")))
+        .children(list.map(section)));
+  }
+}

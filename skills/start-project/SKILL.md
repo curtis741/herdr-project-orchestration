@@ -80,17 +80,17 @@ One workspace holds everything for this project — the orchestrator, librarian,
 First, check if a project is already initialized:
 
 ```bash
-echo $HERDR_PROJECT
+project name
 ```
 
-**If set** (`project start` already ran), the workspace and state file exist — do NOT create another workspace. Verify with `project info` and register if needed:
+**If it prints a name** (`project start` already ran), the workspace and state file exist — do NOT create another workspace. Verify with `project info` and register if needed:
 
 ```bash
 project info
 project register orchestrator
 ```
 
-**If not set**, create everything from scratch:
+**If it exits non-zero**, create everything from scratch:
 
 ```bash
 eval "$(project start <project-name> "<epic human name> (APP-XXXX)")"
