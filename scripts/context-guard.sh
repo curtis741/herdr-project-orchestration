@@ -28,9 +28,26 @@ PROJECTS_DIR="$HOME/.herdr/projects"
 PCT="${PROJECT_DISTILL_PCT:-60}"
 
 input="$(cat)"
-pane="${HERDR_PANE_ID:-}"
-[[ -n "$pane" && -d "$PROJECTS_DIR" ]] || exit 0
+[[ -d "$PROJECTS_DIR" ]] || exit 0
 command -v jq >/dev/null || exit 0
+
+# Terminal backend (same choice as project.sh: HC_TERMINAL_ID -> hc, HERDR_ENV -> herdr,
+# classic when both or neither; PROJECT_BACKEND overrides). Only be_self is used.
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+_be="${PROJECT_BACKEND:-}"
+if [[ -z "$_be" ]]; then
+  if [[ -n "${HC_TERMINAL_ID:-}" && -z "${HERDR_ENV:-}" ]]; then _be=hc; else _be=herdr; fi
+fi
+[[ "$_be" == hc || "$_be" == herdr ]] || exit 0
+# shellcheck source=backend/herdr.sh
+source "$(cd -P "$(dirname "$_src")" && pwd)/backend/$_be.sh"
+pane="$(be_self)"
+[[ -n "$pane" ]] || exit 0
 
 # --- Find project + role for this pane ---
 project="" role=""

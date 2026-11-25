@@ -15,7 +15,7 @@ Verify the `project` CLI is available:
 which project
 ```
 
-If it fails, stop — this skill requires the project-orchestration plugin (`herdr plugin install curtis741/herdr-project-orchestration`).
+If it fails, stop — this skill requires the project-orchestration plugin or mod to be installed.
 
 ## Mode detection
 
@@ -75,24 +75,22 @@ If you can't determine the repo from labels, ask the user.
 
 ## Step 3: Create the project workspace and initialize
 
-One workspace holds everything for this project — orchestrator tab, librarian tab, and worker tabs.
+One workspace holds everything for this project — the orchestrator, librarian, and workers. You address every agent by role; you never handle pane, tab, or workspace IDs.
 
 First, check if a project is already initialized:
 
 ```bash
-echo $HERDR_PROJECT
+project name
 ```
 
-**If set** (`project start` already ran), the workspace and state file exist — do NOT create another workspace. Verify with `project info` and register if needed:
+**If it prints a name** (`project start` already ran), the workspace and state file exist — do NOT create another workspace. Verify with `project info` and register if needed:
 
 ```bash
 project info
 project register orchestrator
 ```
 
-Read the workspace ID from `project info` and use it for all tab creation below.
-
-**If not set**, create everything from scratch:
+**If it exits non-zero**, create everything from scratch:
 
 ```bash
 eval "$(project start <project-name> "<epic human name> (APP-XXXX)")"
@@ -100,7 +98,7 @@ eval "$(project start <project-name> "<epic human name> (APP-XXXX)")"
 
 The project name should be the lowercase project key (e.g. `app-1234`). The workspace label should be the project's human-readable name — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to.
 
-All tabs you create below get `--env HERDR_PROJECT=<project-name>` so every agent resolves the same state file automatically.
+Every agent started with `project spawn` below resolves the same project state file automatically.
 
 ### Communication commands
 
@@ -124,28 +122,18 @@ Setup-phase `--wait` on support agent assignments (librarian, watcher, researche
 
 ### Spawn the librarian
 
-Create a tab for the librarian in the project workspace:
+Spawn the librarian in the project workspace with a minimal identity prompt as its first task (the first task goes in the spawn, not a later prompt). `project register` writes the state file and signals READY to you automatically:
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=<project-name> --no-focus
-```
-
-Read the pane ID from the response. Start a claude agent:
-
-```bash
-herdr agent start librarian --kind claude --pane <pane_id> -- -n librarian
-```
-
-Boot the librarian with a minimal identity prompt. `project register` writes the state file and signals READY to you automatically:
-
-```bash
-herdr agent prompt <pane_id> "Project librarian.
+project spawn librarian --cwd "$PWD" --label librarian --title librarian --wait --timeout 60000 --task - <<'EOF'
+Project librarian.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
 
 Boot sequence:
 1. Run: project register librarian
-2. Wait for your assignment." --wait --timeout 60000
+2. Wait for your assignment.
+EOF
 ```
 
 When the librarian reports READY, send its full role payload:
@@ -169,20 +157,15 @@ Your role is defined in ~/.claude/skills/start-project/librarian.md — read it 
 The watcher monitors CI on all worker PRs and reports failures directly to workers. Spawn it alongside the librarian — it's long-lived, one per project.
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "watcher" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start watcher --kind claude --pane <pane_id> -- -n watcher
-```
-
-Boot the watcher:
-
-```bash
-herdr agent prompt <pane_id> "Project watcher.
+project spawn watcher --cwd "$PWD" --label watcher --title watcher --wait --timeout 60000 --task - <<'EOF'
+Project watcher.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'watcher'.
 
 Boot sequence:
 1. Run: project register watcher
-2. Wait for your assignment." --wait --timeout 60000
+2. Wait for your assignment.
+EOF
 ```
 
 When the watcher reports READY, send its role payload:
@@ -200,21 +183,18 @@ Your role is defined in ~/.claude/skills/start-project/watcher.md — read it no
 
 If the project has open discovery questions (noted in the description, spike comments, or your own judgment), spawn a long-lived researcher alongside wave 1. Skip this if the project is well-understood.
 
-```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "researcher" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start researcher --kind claude --pane <pane_id> -- -n researcher
-```
-
-Boot the researcher with a minimal identity prompt:
+Spawn the researcher with a minimal identity prompt:
 
 ```bash
-herdr agent prompt <pane_id> "Project researcher.
+project spawn researcher --cwd "$PWD" --label researcher --title researcher --wait --timeout 60000 --task - <<'EOF'
+Project researcher.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'researcher'.
 
 Boot sequence:
 1. Run: project register researcher
-2. Wait for your assignment." --wait --timeout 60000
+2. Wait for your assignment.
+EOF
 ```
 
 When the researcher reports READY, send its full role payload. Include the research.md path and whether to start with discovery or resume from existing findings:
@@ -255,13 +235,19 @@ Your role is defined in ~/.claude/skills/start-project/researcher.md — read it
 When the researcher's context is degraded (slow responses, losing track of findings, deep in a rabbit hole), restart it cleanly. The durable research.md means no findings are lost:
 
 ```bash
-project stop researcher
-herdr pane close <pane_id>
-herdr agent start researcher --kind claude --pane <pane_id> -- -n researcher
-project register researcher <pane_id>
+project stop researcher --close
+project spawn researcher --cwd "$PWD" --label researcher --title researcher --wait --timeout 60000 --task - <<'EOF'
+Project researcher.
+
+All agents use 'project prompt <role> <message>' to communicate. Your role is 'researcher'.
+
+Boot sequence:
+1. Run: project register researcher
+2. Wait for your assignment.
+EOF
 ```
 
-Boot with the resume payload above (Phase: ongoing). The researcher loads research.md and picks up where it left off. Don't use `--resume` for a degraded researcher — the point of restarting is to shed the bloated context.
+Then send the resume payload above (Phase: ongoing). The researcher loads research.md and picks up where it left off. Don't use `--resume` for a degraded researcher — the point of restarting is to shed the bloated context.
 
 ## Step 3a: Clean up stale worktrees
 
@@ -275,7 +261,7 @@ This cross-references `.worktrees/` directories with the project state file. Wor
 
 ## Step 4: Spawn wave 1 workers
 
-For each ticket in wave 1, create a worktree inside the repo, then spawn a worker in a tab scoped to the repo root:
+For each ticket in wave 1, create a worktree inside the repo, then spawn a worker scoped to the repo root:
 
 ### 4a. Create the worktree
 
@@ -285,7 +271,7 @@ git -C <repo_path> worktree add .worktrees/<ticket-key-lowercase> -b <ticket-key
 
 Branch name matches the directory name — always lowercase ticket key, no prefixes. This puts the worktree at `<repo>/.worktrees/<ticket>/` — already gitignored, and inside the repo dir so the Claude session can access it.
 
-### 4b. Name the worker and create its tab
+### 4b. Name the worker
 
 Pick the next available worker name:
 
@@ -295,22 +281,17 @@ worker_name=$(project next-worker)
 
 This returns NATO phonetic names in order: alpha, bravo, charlie, etc., wrapping to alpha2 after zulu. Names are never reused within a project.
 
-```bash
-herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "$worker_name — <ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start "$worker_name" --kind claude --pane <pane_id> -- -n "$worker_name — <focus>"
-project assign "$worker_name" <ticket-key>
-```
-
-`-n` sets the session name shown in the terminal title. `<focus>` is 2–4 words from the ticket summary describing what this worker is doing (e.g. `charlie — fee column backfill`), so the user can tell workers apart at a glance. Reuse the same name whenever you restart or resume this worker.
+The spawn itself is in 4c, because the boot prompt is the spawn's first task. `--label` is the tab label and `--title` the session name shown in the terminal title. `<focus>` is 2–4 words from the ticket summary describing what this worker is doing (e.g. `charlie — widget column backfill`), so the user can tell workers apart at a glance. Reuse the same name whenever you restart or resume this worker.
 
 The Claude session starts scoped to `<repo_path>` — it shares memory, `/resume`, and session list with the primary checkout.
 
-### 4c. Boot the worker
+### 4c. Spawn and boot the worker
 
-Send a minimal boot prompt. The worker cds into its worktree, registers itself (which writes the state file and signals READY to you), then waits for assignment:
+Spawn the worker with a minimal boot prompt as its first task. The worker cds into its worktree, registers itself (which writes the state file and signals READY to you), then waits for assignment. Then record the ticket:
 
 ```bash
-herdr agent prompt <pane_id> "<ticket-summary> — worker $worker_name.
+project spawn "$worker_name" --cwd <repo_path> --label "$worker_name — <ticket-key>" --title "$worker_name — <focus>" --wait --timeout 60000 --task - <<EOF
+<ticket-summary> — worker $worker_name.
 Your worktree is at .worktrees/<ticket-key-lowercase>/.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is '$worker_name'.
@@ -319,7 +300,9 @@ Boot sequence:
 1. cd .worktrees/<ticket-key-lowercase>/
 2. Run: pwd && git branch --show-current
 3. Run: project register $worker_name
-4. Wait for your assignment." --wait --timeout 60000
+4. Wait for your assignment.
+EOF
+project assign "$worker_name" <ticket-key>
 ```
 
 ### 4d. Send the assignment
@@ -384,26 +367,23 @@ project prompt <role> "DISTILL_ACK — commit any WIP, write your state to $(pro
 
 When you receive `DISTILL_READY`, spawn the successor in a **new tab**, leaving the old agent alive so the successor can question it. Don't read the distill file yourself — the successor reads it directly, so its contents never pass through your context.
 
-1. Note the old agent's pane: `old_pane=$(project resolve <role>)`
-2. Create a new tab with the same label and cwd as the original, and start a fresh agent (not `--resume` — the whole point is clean context):
-   ```bash
-   herdr tab create --workspace <workspace-id> --cwd <same-cwd-as-original> --label "<same-label-as-original>" --env HERDR_PROJECT=<project-name> --no-focus
-   herdr agent start <role> --kind claude --pane <new_pane_id> -- -n "<same session name as before>"
-   ```
-3. Boot the successor with its original boot steps, plus the takeover instructions:
-   ```bash
-   herdr agent prompt <new_pane_id> "<original boot prompt for this role — worktree cd, etc.>
+Spawn the successor as a takeover with the same label, title and cwd as the original and a fresh session (not `--resume` — the whole point is clean context). The old agent keeps the role until the successor registers. The boot prompt is the spawn's first task: the original boot steps, plus the takeover instructions:
 
-   You are taking over as <role> after a distill. Before waiting for anything:
-   1. Run: project register <role>
-   2. Read $(project dir)/<role>.distill.md — your predecessor's state. Trust it; don't re-verify everything against the tracker or GitHub (that refills your context immediately). Check a specific item only when you act on it.
-   3. Your predecessor is still live in pane $old_pane. If anything in the distill file is unclear, ask it directly: herdr agent prompt $old_pane '<question>' --wait, then herdr agent read $old_pane.
-   4. When you have no more questions (or none at all), run: project retire $old_pane
-   5. Continue the work. Your original assignment:
-   <original ticket/role assignment>" --wait --timeout 60000
-   ```
+```bash
+project spawn <role> --takeover --cwd <same-cwd-as-original> --label "<same-label-as-original>" --title "<same-title-as-before>" --wait --timeout 60000 --task - <<EOF
+<original boot prompt for this role — worktree cd, etc.>
 
-The successor owns the old agent's shutdown — it registers first (so signals route to it immediately), asks whatever it needs, then runs `project retire`, which closes the old tab. The old session ID is kept in the state file's `previous_sessions` in case it's needed later. You don't need to track the handoff further.
+You are taking over as <role> after a distill. Before waiting for anything:
+1. Run: project register <role>
+2. Read $(project dir)/<role>.distill.md — your predecessor's state. Trust it; don't re-verify everything against the tracker or GitHub (that refills your context immediately). Check a specific item only when you act on it.
+3. Your predecessor is still live as <role>@prev. If anything in the distill file is unclear, ask it directly: project ask <role>@prev '<question>'.
+4. When you have no more questions (or none at all), run: project retire <role>
+5. Continue the work. Your original assignment:
+<original ticket/role assignment>
+EOF
+```
+
+The successor owns the old agent's shutdown — it registers first (so signals route to it immediately), asks whatever it needs, then runs `project retire <role>`, which closes the old agent. The old session ID is kept in the state file's `previous_sessions` in case it's needed later. You don't need to track the handoff further.
 
 The distill file is the agent's own summary of where it left off — what's done, what's left, current approach, decisions made. It lives in the project dir (not the worktree), so it never shows up in `git status`.
 
@@ -411,11 +391,11 @@ The distill file is the agent's own summary of where it left off — what's done
 
 Two commands wind the project down. Run them only when the user asks for it, or when you send a `RESET —` signal yourself.
 
-**Pause** (end of day, or switching to another epic): `project dump`. Every other live agent writes its unreported state to `$(project dir)/<role>.final.md`, or writes nothing. All prompts go out in parallel. Each agent is then stopped with its session preserved, and its pane is closed. Then write your own `orchestrator.final.md`. To pick the project back up, follow § Reboot recovery.
+**Pause** (end of day, or switching to another epic): `project dump`. Every other live agent writes its unreported state to `$(project dir)/<role>.final.md`, or writes nothing. All prompts go out in parallel. Each agent is then stopped with its session preserved, and closed. Then write your own `orchestrator.final.md`. To pick the project back up, follow § Reboot recovery.
 
 **Reset** (context has collapsed across the project and a clean start beats carrying it forward): `project reset`. If the user runs it from outside, you get `RESET — ...` and run it yourself. It does the same dump, then writes a master-distill template to `$(project dir)/orchestrator.reset.md`.
 1. Fill in every TODO: shipped, in flight, decisions, remaining work, waiting on the user, notes for the successor. Link PRs, tickets and files instead of restating them. You may read the agent dump files it lists; this is the one time you read them, because you are writing the summary.
-2. Run `project reset --handoff`. It spawns a fresh orchestrator in a new tab, which registers, reads the distill, can question you, and then retires your pane. Don't do anything else after the handoff.
+2. Run `project reset --handoff`. It spawns a fresh orchestrator, which registers, reads the distill, can question you, and then retires you. Don't do anything else after the handoff.
 
 Either command leaves running any agent that times out or is stuck on a permission prompt, so nothing is lost. Deal with that agent, then re-run the command. A re-run only prompts agents that are still live. `--handoff` refuses to run while any agent is live or any TODO is left.
 
@@ -423,15 +403,11 @@ Either command leaves running any agent that times out or is stuck on a permissi
 
 When a worker's DONE signal includes a test brief, spawn an independent tester agent. The tester and worker talk directly — you just set up the introduction.
 
-```bash
-herdr tab create --workspace <workspace-id> --cwd <repo_path> --label "tester-<ticket-key>" --env HERDR_PROJECT=<project-name> --no-focus
-herdr agent start tester-<ticket-key> --kind claude --pane <pane_id> -- -n "tester-<ticket-key> — <focus>"
-```
-
-The tester needs to cd into the worker's worktree to test against the worker's branch:
+The tester needs to cd into the worker's worktree to test against the worker's branch. The boot prompt is the spawn's first task:
 
 ```bash
-herdr agent prompt <pane_id> "You are an independent API tester for <ticket-key>.
+project spawn tester-<ticket-key> --cwd <repo_path> --label "tester-<ticket-key>" --title "tester-<ticket-key> — <focus>" --wait --timeout 60000 --task - <<'EOF'
+You are an independent API tester for <ticket-key>.
 
 Boot:
 1. cd .worktrees/<ticket-key-lowercase>/ && pwd && git branch --show-current
@@ -444,7 +420,8 @@ The worker's role is '<ticket-key-lowercase>'.
 
 Run /project-tester to load your skill.
 
-Reply 'ready' when understood." --wait --timeout 60000
+Reply 'ready' when understood.
+EOF
 ```
 
 Tell the worker about the tester:
@@ -471,7 +448,7 @@ When a worker's PR is **merged** (check via GitHub MCP — the user may merge ma
 
 When a worker is `blocked`:
 
-1. Read its state: `herdr agent read <pane_id> --source recent-unwrapped --lines 40`
+1. Read its state: `project read <role> --lines 40`
 2. If it's a permission prompt or question, escalate to the user
 3. If it's a technical blocker, report it
 
@@ -499,11 +476,11 @@ project ask librarian "APP-1003 depends on APP-1001. Does APP-1003 need the impl
 
 ### 6b. If reuse — assign the next ticket
 
-Track the new assignment, update the tab label, and reset the branch:
+Track the new assignment, update its label, and reset the branch:
 
 ```bash
 project assign <worker-name> <new-ticket-key>
-herdr tab rename <tab-id> "<worker-name> — <new-ticket-key>"
+project rename <worker-name> "<worker-name> — <new-ticket-key>"
 project prompt <worker-name> "Next ticket in chain. Reset your worktree:
 git checkout -b <new-branch> origin/main
 
@@ -518,17 +495,16 @@ Description: <ticket description>"
 No next ticket, or a fresh worker is better. Shut down completely:
 
 ```bash
-project stop <worker-name>
-herdr pane close <pane_id>
+project stop <worker-name> --close
 ```
 
-`project stop` marks the agent as stopped in the state file but preserves its session ID, pane ID, tickets, and worktree path. If you later need that worker's context (rare — the librarian should have what matters), resume it:
+`project stop` marks the agent as stopped in the state file but preserves its session ID, tickets, and worktree path. If you later need that worker's context (rare — the librarian should have what matters), resume it:
 
 ```bash
-session_id=$(project session <worker-name>)
-herdr agent start <worker-name> --kind claude --pane <pane_id> -- --resume "$session_id" -n "<worker-name> — <focus>"
-project register <worker-name> <pane_id>
+project spawn <worker-name> --resume --cwd <repo_path> --label "<worker-name> — <ticket-key>" --title "<worker-name> — <focus>"
 ```
+
+`--resume` uses the stored session. The worker re-registers itself on boot.
 
 This applies to workers and testers. The librarian and researcher stay up for the life of the epic — both accumulate context that's expensive to rebuild (merged diffs for the librarian, domain knowledge for the researcher). An idle researcher is in its correct steady state, not a candidate for shutdown.
 
@@ -557,7 +533,7 @@ When the librarian sends `PROJECT_COMPLETE` (all tickets done, all PRs merged):
 
 ## Reboot recovery
 
-If you're a fresh orchestrator session picking up a project after a reboot (computer restart, terminal closed), the system is designed to be resumable from durable state. All pane IDs are stale but everything needed to reconstruct the project lives on disk.
+If you're a fresh orchestrator session picking up a project after a reboot (computer restart, terminal closed), the system is designed to be resumable from durable state. Every running agent is gone, but everything needed to reconstruct the project lives on disk.
 
 ### Minimal state for recovery
 
@@ -584,10 +560,9 @@ From these four sources, reconstruct: which wave, which tasks done/in-progress/b
 
 3. **Resume agents with session IDs** — priority order: librarian first (it has accumulated knowledge), then active workers:
    ```bash
-   herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "<role>" --env HERDR_PROJECT=<project-name> --no-focus
-   herdr agent start <role> --kind claude --pane <new_pane_id> -- --resume <session-id> -n "<role>, or <role> — <focus> for workers"
+   project spawn <role> --resume --cwd "$PWD" --label "<role>" --title "<role>"   # workers: --label/--title "<role> — <ticket-key>" / "<role> — <focus>"
    ```
-   Each agent self-registers on boot, which updates its pane ID in the state file.
+   Each agent self-registers on boot, which refreshes its entry in the state file.
 
 4. **Reconstruct project state** — once the librarian is back:
    ```bash
@@ -617,8 +592,8 @@ When the user asks for status, report this ledger. Use numbered lists per your w
 
 ## Error recovery
 
-- **NEED signal** — an agent tried to reach a stopped agent. The `project` CLI auto-escalates: you'll receive `NEED — <caller> needs <role> (stopped)` with the original message. Decide whether to restart the agent (`--resume` with its session ID from `project roster`) or handle the request another way.
-- **Worker crashes** — read the pane output, diagnose, restart the agent in the same tab or create a fresh one. Re-register it: `project register <role> <new-pane-id>`
+- **NEED signal** — an agent tried to reach a stopped agent. The `project` CLI auto-escalates: you'll receive `NEED — <caller> needs <role> (stopped)` with the original message. Decide whether to restart the agent (`project spawn <role> --resume`) or handle the request another way.
+- **Worker crashes** — read its output (`project read <role>`), diagnose, restart it with `project spawn <role> --resume` (stopped or dead roles can be respawned), or `project stop <role> --close` and spawn a fresh one. The agent re-registers itself on boot.
 - **Merge conflict** — tell the worker to merge main into its branch (never force-push)
 - **Flaky tests** — worker can use `/fix-flaky-test` if available
 - **CI failures** — worker can use `/babysit-pr` after opening the PR

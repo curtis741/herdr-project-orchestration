@@ -19,7 +19,7 @@ Three skills, global (`~/.claude/skills/`):
 ## Agent interaction model
 
 ```
-Project Workspace (one Herdr workspace, all roles as tabs)
+Project Workspace (one workspace per project, all roles as tabs)
   ├── Orchestrator tab (repo root)
   ├── Librarian tab (repo root, stays on main)
   ├── Watcher tab (repo root, stays on main)
@@ -50,7 +50,7 @@ Tester ──findings──> Orchestrator ──"fix these"──> Worker
 
 ## Communication protocol
 
-Two commands via the `project` CLI (`~/.local/bin/project`), which resolves roles to pane IDs from a shared state file. No agent names to hallucinate, no `herdr agent list` to parse.
+Two commands via the `project` CLI (`~/.local/bin/project`), which resolves roles to terminals from a shared state file. Agents address each other by role only: no agent names to hallucinate, no pane IDs or agent lists to parse.
 
 - **`project prompt`** — fire a signal, don't need the reply (STARTING, COMPLETE, DONE, BLOCKED, SCOPE, DISTILL, assignments, merge notifications)
 - **`project ask`** — send a question, wait for the agent to finish, print its pane output to stdout so the caller gets the answer in context
@@ -95,27 +95,34 @@ This keeps ticket management off the orchestrator (stays lightweight) and off wo
 
 ### `project` CLI (`~/.local/bin/project`)
 
-Standalone shell script. State file at `~/.herdr/projects/<project-name>.json`. Single writer (orchestrator), many readers (all agents). Project name is injected via `HERDR_PROJECT` env var (orchestrator passes `--env HERDR_PROJECT=<name>` on every `herdr tab create`).
+Standalone shell script. State file at `~/.herdr/projects/<project-name>.json`. Single writer (orchestrator), many readers (all agents). Agents get the project name from `project name` (exits 1 if none); on classic herdr it comes from the `HERDR_PROJECT` env var that `project spawn` sets, on the hc backend from the terminal's `project` label.
 
-- `project init <project-name> [workspace-id]` — create state file, print `export HERDR_PROJECT=<name>`
+Everything an agent needs from the terminal layer goes through these subcommands, addressed by role. No agent ever handles a pane ID, workspace ID, tab ID or terminal name.
+
+- `project open <project-name> [--label TEXT] [--focus]` — create the project's workspace and state file, print `export HERDR_PROJECT=<name>` (used with `eval`)
+- `project close` — close the project's workspace (all tabs)
+- `project spawn <role> [--cwd DIR] [--label TEXT] [--title TEXT] (--task "<boot>" | --task - | --task-file PATH) [--wait --timeout MS] [--resume] [--takeover]` — open a tab, start the agent and deliver its first task in the launch itself (a later prompt to a booting agent can be dropped). Pre-registers the role. `--resume` reuses the stored session; `--takeover` starts a successor while the old agent keeps the role until the successor registers
 - `project next-worker` — print the next unused worker name (NATO phonetic alphabet: alpha, bravo, charlie... then alpha2, bravo2...). Names are never reused within a project
-- `project register <role> <pane-id>` — add agent to roster after spawn
+- `project register <role>` — an agent's boot step: confirms the roster entry, signals READY, records its session
 - `project assign <role> <ticket-key>` — track a ticket assignment to a worker (supports multiple tickets per worker)
-- `project prompt <role> <message>` — fire-and-forget signal (resolve role → pane ID, run `herdr agent prompt`)
+- `project prompt <role> <message> [--wait --timeout MS]` — fire-and-forget signal
 - `project ask <role> <question>` — send, wait for idle, read and print the reply to stdout
-- `project read <role> [--lines N]` — read an agent's recent pane output (non-blocking)
-- `project roster` — print role → pane ID map
-- `project status` — show agent states (idle/working/done/blocked) for all roles
-- `project resolve <role>` — print pane ID (for scripting)
+- `project read <role> [--lines N]` — read an agent's recent output (non-blocking)
+- `project roster` — print the project's roles
+- `project status [<role>]` — one word per role: working/idle/blocked/done/stopped/unreachable (no argument: whole roster)
+- `project stop <role> [--close]` — mark an agent stopped, optionally closing its tab
+- `project rename <role> "<label>"` — relabel a role's tab
+- `project retire <role>` — a successor shuts down its predecessor (see distill)
 - `project session <role>` — print session ID (for `--resume` or `SendMessage`)
 
-### Herdr
+`<role>@prev` addresses a role's predecessor (`project ask`, `prompt`, `read`); it exists only after the successor has registered.
 
-- `herdr workspace create` — one workspace per project (all roles as tabs)
-- `herdr tab create --workspace <id>` — one tab per role (librarian, researcher, workers)
-- `herdr agent start <name> --kind claude --pane <id>` — start agent in a pane
-- `herdr agent read <pane_id>` — read agent output
-- `herdr agent get <pane_id>` — poll agent state
+### Transport
+
+The terminal layer (workspaces, tabs, agent launch, prompt delivery, reads, state polling, closing) lives entirely in `scripts/project.sh`. Today it drives classic Herdr. An `hc` backend (Herdr app) is planned (see `docs/dual-mode.md`) behind the same subcommands, so skills and this document don't change when the transport does.
+
+### Git
+
 - `git worktree add <repo>/.worktrees/<ticket> -b <branch> origin/main` — worktree inside repo dir
 
 ### Researcher can create tickets for scope gaps
@@ -234,7 +241,7 @@ The test brief is the critical handoff artifact — without it, the tester has n
 
 ### Plugin updates are orchestrator-only
 
-When the user runs `herdr plugin update`, the CHANGELOG diff goes to the orchestrator — not to every agent. The orchestrator tells the user what changed and they decide whether any running agent needs a recycle.
+When the user updates the plugin (or mod), the CHANGELOG diff goes to the orchestrator — not to every agent. The orchestrator tells the user what changed and they decide whether any running agent needs a recycle.
 
 Workers are short-lived — most finish before an update matters, and recycled/restarted workers load updated skills automatically. Long-lived agents (librarian, watcher, researcher) idle most of the time; injecting behavioral changes mid-session is more likely to confuse than help. The orchestrator surfaces the decision to the user, who can recycle specific agents if the update warrants it.
 
@@ -246,7 +253,7 @@ This follows signal economy: fanning the same CHANGELOG to N agents burns tokens
 
 ### State recovery via project state file
 
-The `project` CLI maintains a state file at `~/.herdr/projects/<project-name>.json` mapping role → pane ID + session ID. Agents self-register via `project register <role>` during boot (auto-detects pane ID and session ID). The state file is never deleted — `project stop` marks agents as stopped but preserves all data. The project name is injected as `HERDR_PROJECT` via `herdr tab create --env`. Sessions resumed after a reboot lose that env var, so when it's unset the CLI falls back to the state file whose agents claim `$HERDR_PANE_ID` (or whose `workspace_id` matches `$HERDR_WORKSPACE_ID`).
+The `project` CLI maintains a state file at `~/.herdr/projects/<project-name>.json` mapping role → terminal + session ID (the CLI's own bookkeeping; agents never read it). Agents self-register via `project register <role>` during boot (auto-detects terminal and session ID). The state file is never deleted — `project stop` marks agents as stopped but preserves all data. The project name is injected as `HERDR_PROJECT` by `project spawn`. Sessions resumed after a reboot lose that env var, so when it's unset the CLI falls back to the state file whose agents claim the current terminal (or whose workspace matches the current one).
 
 On restart, `project roster` and `project status` show all agents (including stopped ones) and their current state. The orchestrator asks the librarian for ticket/PR status rather than querying GitHub.
 
@@ -266,15 +273,15 @@ If approve:
   Orchestrator → agent: DISTILL_ACK — write state, signal DISTILL_READY
   Agent commits WIP (if applicable), writes $(project dir)/<role>.distill.md
   Agent → orchestrator: DISTILL_READY
-  Orchestrator spawns successor in a NEW tab (fresh, not --resume), boot prompt names old pane
-  Successor registers under the same role (signals now route to it), reads the distill file
-  Successor optionally questions the old agent by pane ID
-  Successor runs `project retire <old-pane>` → old tab closed, SHUTDOWN logged
+  Orchestrator runs `project spawn <role> --takeover …` → successor in a NEW tab (fresh, not --resume), boot prompt points at the distill file
+  Successor runs `project register <role>` (signals now route to it), reads the distill file
+  Successor optionally questions the old agent with `project ask <role>@prev "<q>"`
+  Successor runs `project retire <role>` → old tab closed, SHUTDOWN logged
 If defer:
   Orchestrator → agent: DISTILL_DEFER — finish current step first
 ```
 
-**Project-wide reset:** `project reset` is distill applied to the whole project at once. A dump runs in parallel (`DUMP` → each agent writes `<role>.final.md` or nothing, then is stopped and its pane closed), the orchestrator writes a master distill (`orchestrator.reset.md`), and `reset --handoff` boots a fresh orchestrator from it the same way a distill successor boots. The successor spawns fresh agents instead of resuming old sessions, for the same reason distill restarts fresh. `project dump` alone is the pause variant: the same dump, no successor, and sessions stay resumable. Agents that don't finish in time are left running, never killed mid-write.
+**Project-wide reset:** `project reset` is distill applied to the whole project at once. A dump runs in parallel (`DUMP` → each agent writes `<role>.final.md` or nothing, then is stopped and its tab closed), the orchestrator writes a master distill (`orchestrator.reset.md`), and `reset --handoff` boots a fresh orchestrator from it the same way a distill successor boots. The successor spawns fresh agents instead of resuming old sessions, for the same reason distill restarts fresh. `project dump` alone is the pause variant: the same dump, no successor, and sessions stay resumable. Agents that don't finish in time are left running, never killed mid-write.
 
 **Key design choices:**
 - DISTILL goes directly to the orchestrator, not through the librarian. It's an operational signal about agent health, not a lifecycle event. The librarian doesn't need to know or act on it.
@@ -282,11 +289,11 @@ If defer:
 - The agent writes its own state summary. It knows what matters from its context.
 - The orchestrator never reads the distill file — it passes the path. The successor reads it directly, so the state never burns orchestrator tokens.
 - Distill files live in the project dir, not the worktree — they don't pollute `git status`, and the successor always knows where to look.
-- The successor owns the predecessor's shutdown. Either it has questions or it doesn't; once it's ramped, it retires the old pane itself. No extra signal to the orchestrator — `SHUTDOWN` is logged only. Re-registering keeps the old session ID in `previous_sessions`.
+- The successor owns the predecessor's shutdown. Either it has questions or it doesn't; once it's ramped, it retires the old agent itself. No extra signal to the orchestrator — `SHUTDOWN` is logged only. Re-registering keeps the old session ID in `previous_sessions`.
 - Workers commit WIP before distilling so no code is lost. The fresh session picks up from the committed state.
 - **Distill beats compaction.** Auto-compaction is lossy and uncontrolled — one worker lost the fact that it was in a project at all and fell back to a generic subagent instead of `project research`. A distill is written by the agent for its role; a compaction summary is generic.
 
-**Context guard (enforcement):** agents can't reliably sense their own context size, so a global Claude Code hook (`scripts/context-guard.sh`, installed by `setup.sh`) does it for them. It's a no-op unless the session's pane is a registered, non-stopped agent in a project state file.
+**Context guard (enforcement):** agents can't reliably sense their own context size, so a global Claude Code hook (`scripts/context-guard.sh`, installed by `setup.sh`) does it for them. It's a no-op unless the session's terminal is a registered, non-stopped agent in a project state file.
 - **Stop hook** — after each turn, reads the transcript's last assistant `usage` (input + cache tokens) as the current context size. Once that passes `PROJECT_DISTILL_PCT` (default 60%) of the context window, it injects a one-time nudge telling the agent to request DISTILL. The orchestrator is told to write `orchestrator.distill.md` and ask the user for a fresh session instead.
 - **SessionStart `compact` hook** — the backstop. If compaction happens anyway, it re-injects identity (role, project, project dir, `project` CLI), which instructions to re-read, and a push to DISTILL.
 - **Percent of window, not a fixed token count.** Every session starts with a fixed baseline (system prompt, tool/MCP definitions, CLAUDE.md, memory) that can exceed 80k tokens and is identical in a fresh successor. The first version used an absolute 150k threshold: a librarian on a 1M window was nudged, distilled, and its successor — 86k at boot, then a re-verification sweep — was nudged again within 3 minutes. At 60% of a 1M window the baseline is noise. Successors are also told to trust the distill file rather than re-verify it.

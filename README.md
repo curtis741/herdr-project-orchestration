@@ -16,6 +16,8 @@ Focused agents, each with its own context window:
 
 The result is consistent quality from the first ticket to the last. Works with any tracker that has parent/child tickets and status transitions (Jira, Linear, GitHub Issues, etc.).
 
+It runs on either Herdr: as a **plugin** for classic Herdr (the `herdr` CLI), or as a **mod** for the Herdr app, which adds a Projects panel. Install one or both; see [Install](#install).
+
 ## How you use it
 
 ### Prerequisites
@@ -27,11 +29,32 @@ The result is consistent quality from the first ticket to the last. Works with a
 
 ### Install
 
+Two ways in, one result: the code lives in a single git clone, `~/.local/share/project-orchestration`, and every link (the `project` command, skills, guide, context-guard hook) points into it.
+
+**Classic Herdr (plugin):**
+
 ```bash
 herdr plugin install curtis741/herdr-project-orchestration
 ```
 
-The build step symlinks the `project` CLI and all skills automatically. Updates propagate through the symlinks — `herdr plugin update` is all you need.
+The build step brings the clone forward to this plugin's version (never backwards) and links everything. `herdr plugin update` upgrades it.
+
+**Herdr app (mod):** paste this into an agent in the app:
+
+```
+Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/curtis741/herdr-project-orchestration/tree/main/mods/project-orchestration
+```
+
+The agent reads `RECIPE.md` first, which lists up front what the mod installs, and asks you before it adds anything. On each app start the mod moves the clone to the newest release tag (checking at most once a day) and relinks. Without the add flow:
+
+```bash
+git clone https://github.com/curtis741/herdr-project-orchestration ~/.local/share/project-orchestration
+git -C ~/.local/share/project-orchestration checkout --quiet --detach "$(git -C ~/.local/share/project-orchestration tag --list 'v[0-9]*' --sort=-v:refname | head -n1)"
+bash ~/.local/share/project-orchestration/scripts/setup.sh
+cp -R ~/.local/share/project-orchestration/mods/project-orchestration ~/.config/herdr-app/mods/   # the panel; optional
+```
+
+Installing both is fine: whichever is newer wins, and an older install never rolls the clone back. Links that used to point at another checkout are reported and repointed.
 
 ### Run a project
 

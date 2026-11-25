@@ -52,6 +52,10 @@ Show agent states (idle, working, blocked) for all registered roles.
 
 Print the project name, workspace ID, and agent count as JSON.
 
+### `project name`
+
+Print the current project's key; exit 1 if the caller is in no project. Backend-neutral — skills use this to detect an existing project and to fill the PR footer instead of reading `$HERDR_PROJECT`.
+
 ### `project resolve <role>`
 
 Print the pane ID for a role. For scripting.

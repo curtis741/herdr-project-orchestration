@@ -10,7 +10,7 @@ Tests the messaging choreography between orchestrator, librarian, watcher, and w
 ## Prerequisites
 
 ```bash
-test "${HERDR_ENV:-}" = 1
+test -n "${HERDR_ENV:-}${HC_TERMINAL_ID:-}"
 which project
 ```
 
@@ -30,29 +30,20 @@ FAKE-001 → FAKE-002
 
 ## Step 1: Create the test workspace and init the project
 
-```bash
-herdr workspace create --cwd "$PWD" --label "Dry Run — Signal Test" --focus
-```
-
-Note the workspace ID. Initialize the project and register yourself:
+Open the project (creates the test workspace, initializes the project, and prints the `HERDR_PROJECT` export), then register yourself:
 
 ```bash
-project init DRY-RUN <workspace-id>
+eval "$(project open DRY-RUN --label "Dry Run — Signal Test" --focus)"
 project register orchestrator
 ```
 
 ## Step 2: Spawn the librarian
 
-```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=DRY-RUN --no-focus
-herdr agent start librarian --kind claude --pane <pane_id>
-project register librarian <pane_id>
-```
-
-Boot prompt — tell it this is a dry run with a canned DAG:
+Spawn it with its boot prompt as the first task (not a later prompt) — tell it this is a dry run with a canned DAG:
 
 ```bash
-herdr agent prompt <pane_id> "DRY RUN — You are the project librarian for a signal protocol test. No real tracker, no real code.
+project spawn librarian --label "librarian" --wait --timeout 60000 --task - <<'EOF'
+DRY RUN — You are the project librarian for a signal protocol test. No real tracker, no real code.
 
 Your job: receive signals, confirm you got them, and check the DAG for unblocks.
 
@@ -73,25 +64,21 @@ Signals you'll receive:
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
 Do NOT load /project-librarian. Just follow the signal protocol above.
-Do NOT run herdr agent list. The project CLI handles addressing.
+Do NOT look up pane, tab or terminal IDs. The project CLI handles addressing.
 
-Reply 'ready' when understood." --wait --timeout 60000
+Reply 'ready' when understood.
+EOF
 ```
 
-Read the response. Confirm the librarian replied 'ready'. If not, diagnose.
+Read the response (`project read librarian --lines 40`). Confirm the librarian replied 'ready'. If not, diagnose.
 
 ## Step 2a: Spawn the watcher
 
-```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "watcher" --env HERDR_PROJECT=DRY-RUN --no-focus
-herdr agent start watcher --kind claude --pane <pane_id>
-project register watcher <pane_id>
-```
-
-Boot prompt:
+Boot prompt goes in the spawn:
 
 ```bash
-herdr agent prompt <pane_id> "DRY RUN — You are the CI watcher for a signal protocol test. No real CI checks.
+project spawn watcher --label "watcher" --wait --timeout 60000 --task - <<'EOF'
+DRY RUN — You are the CI watcher for a signal protocol test. No real CI checks.
 
 Your job: receive WATCH assignments from the librarian and confirm you got them.
 
@@ -102,25 +89,21 @@ Example:
   WATCH — PR #1 for FAKE-001, report failures to fake-001  →  respond: [watcher] ACK WATCH — PR #1 for FAKE-001 added to watch list
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'watcher'.
-Do NOT run herdr agent list. The project CLI handles addressing.
+Do NOT look up pane, tab or terminal IDs. The project CLI handles addressing.
 
-Reply 'ready' when understood." --wait --timeout 60000
+Reply 'ready' when understood.
+EOF
 ```
 
-Read the response. Confirm the watcher replied 'ready'. If not, diagnose.
+Read the response (`project read watcher --lines 40`). Confirm the watcher replied 'ready'. If not, diagnose.
 
 ## Step 3: Spawn worker-a (FAKE-001)
 
-```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "FAKE-001" --no-focus
-herdr agent start fake-001 --kind claude --pane <pane_id>
-project register fake-001 <pane_id>
-```
-
-Boot prompt:
+Boot prompt goes in the spawn:
 
 ```bash
-herdr agent prompt <pane_id> "DRY RUN — You are project worker fake-001. No real code, no worktree.
+project spawn fake-001 --label "FAKE-001" --wait --timeout 120000 --task - <<'EOF'
+DRY RUN — You are project worker fake-001. No real code, no worktree.
 This prompt was sent by the orchestrator. Follow it directly.
 
 Signal protocol — send these signals in order, waiting 5 seconds between each:
@@ -133,9 +116,10 @@ Signal protocol — send these signals in order, waiting 5 seconds between each:
 6. Stop completely. Do not invent additional steps or repeat the protocol.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'fake-001'.
-Do NOT run herdr agent list. Do NOT load /project-worker.
+Do NOT look up pane, tab or terminal IDs. Do NOT load /project-worker.
 
-Start with step 1 now." --wait --timeout 120000
+Start with step 1 now.
+EOF
 ```
 
 ## Step 4: Handle worker-a's READY signal
@@ -165,8 +149,9 @@ Verify with:
 
 ```bash
 project status
-herdr agent read "$(project resolve librarian)" --source recent-unwrapped --lines 40
-herdr agent read "$(project resolve fake-001)" --source recent-unwrapped --lines 40
+project status librarian
+project read librarian --lines 40
+project read fake-001 --lines 40
 ```
 
 ## Step 6: Simulate merge and test auto-unblock
@@ -185,7 +170,7 @@ Expected: the librarian should:
 If the UNBLOCKED signal arrives, the auto-unblock detection works. If not, check what the librarian actually did:
 
 ```bash
-herdr agent read "$(project resolve librarian)" --source recent-unwrapped --lines 40
+project read librarian --lines 40
 ```
 
 ## Step 7: Spawn worker-b (FAKE-002) — triggered by unblock
@@ -193,13 +178,8 @@ herdr agent read "$(project resolve librarian)" --source recent-unwrapped --line
 When you receive the UNBLOCKED signal from the librarian:
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "FAKE-002" --no-focus
-herdr agent start fake-002 --kind claude --pane <pane_id>
-project register fake-002 <pane_id>
-```
-
-```bash
-herdr agent prompt <pane_id> "DRY RUN — You are project worker fake-002. No real code, no worktree.
+project spawn fake-002 --label "FAKE-002" --wait --timeout 120000 --task - <<'EOF'
+DRY RUN — You are project worker fake-002. No real code, no worktree.
 This prompt was sent by the orchestrator. Follow it directly.
 
 Same protocol as fake-001:
@@ -211,9 +191,10 @@ Same protocol as fake-001:
 6. Stop completely. Do not invent additional steps.
 
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'fake-002'.
-Do NOT run herdr agent list. Do NOT load /project-worker.
+Do NOT look up pane, tab or terminal IDs. Do NOT load /project-worker.
 
-Start with step 1 now." --wait --timeout 120000
+Start with step 1 now.
+EOF
 ```
 
 Send the assignment when READY arrives, then watch the same signal cascade as Step 5.
@@ -253,13 +234,17 @@ Failures: <describe what went wrong and which signal didn't land>
 
 ## Step 10: Clean up
 
+Stop and close each agent's pane, then close the test workspace:
+
 ```bash
-herdr workspace close <workspace-id>
+for r in librarian watcher fake-001 fake-002; do project stop "$r" --close; done
+project close
 ```
 
 ## What this tests
 
 - Agent boot and READY handshake
+- `project open` / `spawn` / `prompt` / `read` / `status` / `stop --close` / `close` end to end — the whole run goes through role-addressed subcommands, with no pane, tab or workspace IDs
 - `project prompt` role resolution (no agent name hallucination)
 - Worker → librarian lifecycle signals (STARTING, COMPLETE)
 - Librarian → watcher WATCH assignment
