@@ -283,10 +283,11 @@ Agents degrade silently as their context fills with tool output, dead-end debugg
 Agent → orchestrator: DISTILL — <reason>
 Orchestrator decides: approve or defer
 If approve:
-  Orchestrator → agent: DISTILL_ACK — write state, signal DISTILL_READY
-  Agent commits WIP (if applicable), writes $(project dir)/<role>.distill.md
-  Agent → orchestrator: DISTILL_READY
-  Orchestrator runs `project spawn <role> --takeover …` → successor in a NEW tab (fresh, not --resume), boot prompt points at the distill file
+  Orchestrator runs `project recycle <role>`:
+    → agent: DISTILL_ACK — commit WIP, write $(project dir)/<role>.distill.md (no DISTILL_READY; the command waits for idle, bounded timeout)
+    → a blocked/stuck agent, or no file written: left running, exit 1, re-run later
+    → `project spawn <role> --takeover …` → successor in a NEW tab (fresh, not --resume), same label/title/cwd (recorded at spawn),
+       boot prompt = original boot task (<role>.boot.md) + takeover steps pointing at the distill file
   Successor runs `project register <role>` (signals now route to it), reads the distill file
   Successor optionally questions the old agent with `project ask <role>@prev "<q>"`
   Successor runs `project retire <role>` → old tab closed, SHUTDOWN logged

@@ -134,6 +134,8 @@ Commands:
                                    Address a live predecessor as <role>@prev in prompt/read/ask
   dump [--timeout SECS]            Pause: every other live agent writes unreported state to
                                    <role>.final.md, then is stopped and its pane closed
+  recycle <role> [--timeout SECS]  Fresh context, same role: the agent writes <role>.distill.md,
+                                   then a takeover successor reads it and retires the old agent
   reset [--timeout SECS]           Orchestrator: dump all agents + write a master-distill template
                                    (from anywhere else: asks the orchestrator to run it)
   reset --handoff                  Orchestrator: spawn a fresh orchestrator that boots from the distill
@@ -2275,9 +2277,11 @@ cmd_spawn() {
   _pre_spawn() {
     local tmp="${f}.tmp.$$"
     jq --arg role "$role" --arg pane "$1" --arg tab "$2" --argjson tk "$takeover" \
+       --arg cwd "$cwd" --arg label "$label" --arg title "$title" \
       '(if $tk then .
         else .agents[$role] = ((.agents[$role] // {}) | del(.stopped, .stopped_at, .predecessor_pane, .hosted_by, .hosted_at))
-               + {pane_id: $pane, tab_id: $tab, spawned_at: (now | todate)} end)
+               + {pane_id: $pane, tab_id: $tab, spawned_at: (now | todate),
+                  spawn: {cwd: $cwd, label: $label, title: $title}} end)
        | del(.paused_at)' \
       "$f" > "$tmp" && mv "$tmp" "$f"
     if [[ -n "$hosted_by" ]]; then
@@ -2285,6 +2289,10 @@ cmd_spawn() {
     fi
     log_signal "orchestrator" "$role" "SPAWN" "$role$($resume && echo ' (resume)')"
   }
+  # Keep the boot task so `project recycle` can hand it to a successor.
+  if $have_task && ! $takeover; then
+    printf '%s\n' "$task" > "$(project_dir)/$role.boot.md"
+  fi
   local pane_id tab_id
   _spawn_agent --pre-task _pre_spawn ${wait_args[@]+"${wait_args[@]}"} "$ws" "$cwd" "$label" "$project" "$role" "$task" "${claude_args[@]}"
 
@@ -2370,6 +2378,87 @@ cmd_promote() {
     exit 1
   fi
   cmd_spawn "$@"
+}
+
+# Fresh context, same role, in one command: the agent writes its distill file, then a
+# takeover successor (same label/title/cwd, fresh session) reads it and retires the
+# predecessor. A blocked or stuck agent is left running, never killed mid-write.
+cmd_recycle() {
+  local role="" timeout="$DUMP_TIMEOUT_DEFAULT" usage="usage: project recycle <role> [--timeout SECS]"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --timeout) timeout="${2:?--timeout needs a value}"; shift 2 ;;
+      -*) echo "$usage" >&2; exit 1 ;;
+      *) [[ -z "$role" ]] || { echo "$usage" >&2; exit 1; }; role="$1"; shift ;;
+    esac
+  done
+  if [[ -z "$role" ]]; then
+    echo "$usage" >&2
+    exit 1
+  fi
+  local f caller pane host
+  f="$(ensure_state)"
+  caller="$(resolve_caller "$f")"
+  pane="$(read_pane "$f" "$role")"
+  host="$(read_host "$role" "$f")"
+  if [[ -n "$host" ]]; then
+    echo "error: '$role' is hosted by $host — no agent of its own to recycle" >&2
+    exit 1
+  fi
+  if [[ -z "$pane" ]]; then
+    echo "error: '$role' has no agent — nothing to recycle" >&2
+    exit 1
+  fi
+  if [[ "$caller" == "$role" || "$pane" == "$(be_self)" ]]; then
+    echo "error: refusing to recycle your own role — send DISTILL to the orchestrator instead" >&2
+    exit 1
+  fi
+  if [[ "$(jq -r --arg r "$role" '.agents[$r].stopped // false' "$f")" == "true" ]] || ! be_alive "$pane"; then
+    echo "error: '$role' is not running — use 'project spawn $role --resume' or a plain spawn" >&2
+    exit 1
+  fi
+
+  local dir distill out why
+  dir="$(project_dir)"
+  distill="$dir/$role.distill.md"
+  # Archive a previous distill so "file exists" means "written this time"
+  [[ -f "$distill" ]] && mv "$distill" "$dir/$role.distill.$(date +%Y%m%dT%H%M%S).md"
+  log_signal "${caller:-user}" "$role" "DISTILL_ACK" "project recycle"
+  echo "recycling $role: asking it to write $distill (timeout ${timeout}s)"
+  if ! out=$(be_prompt "$pane" "DISTILL_ACK — you are being recycled into a fresh session. Commit any WIP with a [WIP] prefix, then write your state to $distill: what's done (commits, files), what's left, current approach and key decisions, anything others don't know (local context, debugging findings). Keep it short; link instead of restating. Don't signal or prompt other agents. Reply with one line: 'written'." --wait --until idle --until done --timeout $((timeout * 1000)) 2>&1); then
+    if [[ "$out" == *agent_blocked* ]]; then why="blocked on a prompt in $pane — answer it, then re-run"
+    elif [[ "$out" == *timeout* ]]; then why="still working after ${timeout}s — re-run to retry"
+    else why="error: ${out%%$'\n'*}"; fi
+    echo "LEFT RUNNING — $role $why" >&2
+    exit 1
+  fi
+  if [[ ! -s "$distill" ]]; then
+    echo "LEFT RUNNING — $role went idle without writing $distill; re-run to retry" >&2
+    exit 1
+  fi
+
+  local cwd label title
+  cwd="$(jq -r --arg r "$role" '.agents[$r].spawn.cwd // empty' "$f")"
+  label="$(jq -r --arg r "$role" '.agents[$r].spawn.label // empty' "$f")"
+  title="$(jq -r --arg r "$role" '.agents[$r].spawn.title // empty' "$f")"
+  if [[ -z "$cwd" ]]; then
+    echo "note: no spawn settings recorded for '$role' (spawned by an older version) — using cwd=$PWD, label/title=$role" >&2
+    cwd="$PWD"; label="$role"; title="$role"
+  fi
+  local original=""
+  [[ -f "$dir/$role.boot.md" ]] && original="$(cat "$dir/$role.boot.md")"
+
+  cmd_spawn "$role" --takeover --cwd "$cwd" --label "$label" --title "$title" --wait --timeout 60000 --task - <<EOF
+${original:+$original
+
+}You are taking over as $role after a recycle. Before waiting for anything:
+1. Run: project register $role
+2. Read $distill — your predecessor's state. Trust it; don't re-verify everything against the tracker or GitHub (that refills your context immediately). Check a specific item only when you act on it.
+3. Your predecessor is still live as $role@prev. If anything in the distill file is unclear, ask it directly: project ask $role@prev '<question>'.
+4. When you have no more questions (or none at all), run: project retire $role
+5. Continue the work.
+EOF
+  echo "recycled: $role — the successor retires the predecessor after reading $distill"
 }
 
 cmd_cleanup() {
@@ -2510,6 +2599,7 @@ case "$cmd" in
   dir)        cmd_dir ;;
   retire)     cmd_retire "$@" ;;
   dump)       cmd_dump "$@" ;;
+  recycle)    cmd_recycle "$@" ;;
   reset)      cmd_reset "$@" ;;
   log)        cmd_log "$@" ;;
   log-decision) cmd_log_decision "$@" ;;

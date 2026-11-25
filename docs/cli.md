@@ -84,6 +84,12 @@ Print the signal log. Default: last 50 entries.
 
 Log an orchestrator decision (wave transition, spawn, etc.).
 
+### `project recycle <role> [--timeout SECS]`
+
+Fresh context, same role, one command. Prompts the agent with `DISTILL_ACK` and waits (default 300s) for it to write `$(project dir)/<role>.distill.md`. Then spawns a takeover successor in a new tab with the role's original label, title and cwd (recorded in the state file by `spawn`) and a fresh session. The successor's boot task is the role's original spawn task (kept in `<role>.boot.md`) plus takeover steps: register, read the distill file, ask the predecessor (`<role>@prev`) if needed, `project retire <role>`, carry on.
+
+A blocked or stuck agent, or one that goes idle without writing the file, is left running and the command exits 1; answer the prompt or re-run. Same rule as `dump`: nothing is killed mid-write. Refuses hosted or unassigned roles (nothing to recycle), stopped or dead agents, and the caller's own role (send `DISTILL` to the orchestrator instead). Roles spawned by an older version have no recorded settings; the command falls back to the current directory and the role name for label and title.
+
 ### `project dump [--timeout SECS]`
 
 Pause the project: every other live agent writes unreported state to `<role>.final.md`, then is stopped and its pane closed. Hosted roles are skipped (their host answers for them). Writes `paused_at` to the state file; any later `register` or `spawn` clears it. The mod's Paused list reads it.

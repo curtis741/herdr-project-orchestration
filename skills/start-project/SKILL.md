@@ -355,29 +355,15 @@ Any agent can send `DISTILL — <reason>` when its context is getting noisy and 
 project prompt <role> "DISTILL_DEFER — finish your current step, then re-request if needed"
 ```
 
-**Approve** — if the agent has significant work remaining and context pressure is real:
+**Approve** — if the agent has significant work remaining and context pressure is real, run one command; it does the whole handoff:
 
 ```bash
-project prompt <role> "DISTILL_ACK — commit any WIP, write your state to $(project dir)/<role>.distill.md, then signal DISTILL_READY"
+project recycle <role>
 ```
 
-When you receive `DISTILL_READY`, spawn the successor in a **new tab**, leaving the old agent alive so the successor can question it. Don't read the distill file yourself — the successor reads it directly, so its contents never pass through your context.
+It sends the agent a `DISTILL_ACK`, waits for it to write `$(project dir)/<role>.distill.md`, then spawns the successor as a takeover in a **new tab** with the same label, title and cwd as the original and a fresh session (not `--resume` — the whole point is clean context). The boot task is the original one plus takeover steps: register, read the distill file, question the predecessor (`<role>@prev`) if needed, `project retire <role>`. Don't read the distill file yourself; its contents never pass through your context. The agent doesn't signal `DISTILL_READY` in this flow; the command waits for it to go idle instead.
 
-Spawn the successor as a takeover with the same label, title and cwd as the original and a fresh session (not `--resume` — the whole point is clean context). The old agent keeps the role until the successor registers. The boot prompt is the spawn's first task: the original boot steps, plus the takeover instructions:
-
-```bash
-project spawn <role> --takeover --cwd <same-cwd-as-original> --label "<same-label-as-original>" --title "<same-title-as-before>" --wait --timeout 60000 --task - <<EOF
-<original boot prompt for this role — worktree cd, etc.>
-
-You are taking over as <role> after a distill. Before waiting for anything:
-1. Run: project register <role>
-2. Read $(project dir)/<role>.distill.md — your predecessor's state. Trust it; don't re-verify everything against the tracker or GitHub (that refills your context immediately). Check a specific item only when you act on it.
-3. Your predecessor is still live as <role>@prev. If anything in the distill file is unclear, ask it directly: project ask <role>@prev '<question>'.
-4. When you have no more questions (or none at all), run: project retire <role>
-5. Continue the work. Your original assignment:
-<original ticket/role assignment>
-EOF
-```
+If it exits 1 the agent is left running (blocked on a prompt, still working, or idle without writing the file). Deal with that, then re-run. It refuses hosted or unassigned roles; they have no agent to recycle.
 
 The successor owns the old agent's shutdown — it registers first (so signals route to it immediately), asks whatever it needs, then runs `project retire <role>`, which closes the old agent. The old session ID is kept in the state file's `previous_sessions` in case it's needed later. You don't need to track the handoff further.
 
