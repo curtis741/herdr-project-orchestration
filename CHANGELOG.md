@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0
+
+- **`project recycle <role> [--timeout SECS]`** gives an agent fresh context in one command. It asks the agent to write its distill file, waits (bounded), then spawns the successor as a takeover with the original label, title and cwd. The successor reads the distill file and retires its predecessor. A blocked or stuck agent is left running and the command exits 1. It refuses hosted, unassigned and stopped roles, and the caller's own role. When approving a `DISTILL` request, the orchestrator now runs this instead of the manual ACK / READY / takeover sequence (the manual flow still works).
+- **Classic Herdr no longer loses signals to a blocked agent.** A prompt to an agent showing a question or permission prompt is queued and delivered in order once it's free, as on the app. `ctrl+s` is never sent to a blocked agent. The signal log records QUEUED, DELIVERED and DROPPED on both backends.
+- **Projects panel** has a Recycle button on each running agent row (inline confirm) and a Spinoff dialog per project (title, brief, repo folder).
+
 ## 0.11.0
 
 - **Projects start small.** At startup the orchestrator hosts librarian and researcher. No support agents are spawned. It says so in one line when it confirms the plan. Exception: an epic with no tasks gets a researcher right away to fill them in.

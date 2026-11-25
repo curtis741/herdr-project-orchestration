@@ -12,11 +12,11 @@ Tasks live on disk, waves merge through a review branch, and the orchestrator us
 
 ## Task files
 
-Tasks live in `docs/dogfood/tasks/` (gitignored — these are ephemeral). Each task is a markdown file:
+Each run's tasks live in their own folder, `docs/dogfood/tasks/<project-key>/` (gitignored: they're ephemeral). Read only that folder. Files from other runs and agents' notes sit elsewhere under `docs/dogfood/tasks/` and are not this run's tasks. Each task is a markdown file:
 
 ```
-docs/dogfood/tasks/DOG-001.md
-docs/dogfood/tasks/DOG-002.md
+docs/dogfood/tasks/DOG-500/DOG-501.md
+docs/dogfood/tasks/DOG-500/DOG-502.md
 ```
 
 Format:
@@ -37,12 +37,12 @@ Status values: `todo`, `in-progress`, `done`
 
 ## Research phase
 
-The user dumps raw ideas/feedback to the researcher. The researcher:
+**If the run's task folder already has tasks, skip this phase.** The orchestrator plans from the files. Otherwise there are no tasks, so the researcher gets its own agent right away (start-project's no-tasks rule). The user dumps raw ideas/feedback to it, and the researcher:
 
 1. Organizes ideas into discrete tasks
-2. Writes task files to `docs/dogfood/tasks/`
+2. Writes task files to `docs/dogfood/tasks/<project-key>/`
 3. Assigns wave numbers and blocked-by relationships
-4. Tells the librarian the dependency summary directly — the librarian does NOT read task files (saves tokens)
+4. Tells the librarian role the dependency summary directly. The librarian does NOT read task files (saves tokens).
 5. Reports the task list and DAG to the orchestrator
 
 The researcher decides what's a task vs. what's noise. Not every idea becomes a task.
@@ -55,7 +55,7 @@ When the epic key starts with `DOG-`:
 - **No ticket transitions** — workers update `status:` in task files directly
 - **No PRs** — workers commit to their worktree branch but don't open draft PRs
 - **Wave merge** replaces PR-per-ticket (see below)
-- **No real DAG** — the researcher groups tasks into waves for logical ordering, but there are no blocking dependencies to enforce. The waves are just batches of concurrent work.
+- **No real DAG.** The task files group tasks into waves for logical ordering, but there are no blocking dependencies to enforce. The waves are just batches of concurrent work.
 
 Workers still use worktrees, still signal the librarian, still follow the worker skill. The difference is: no PR to open, no tracker to transition. When a worker finishes, it signals `DONE` to the librarian with a summary of what changed.
 
@@ -69,7 +69,7 @@ Instead of individual PRs reviewed and merged one at a time, a wave's changes me
 4. **Reviews the combined diff** — do the changes make sense together? Conflicts? Regressions?
 5. **Merges the review branch to main** (fast-forward or merge commit, reviewer's judgment)
 6. **Signals the orchestrator:** `"Wave N merged to main. Ready for wave N+1."`
-7. **Orchestrator tells the librarian** to ingest the wave diff (one ingest per wave, not per task)
+7. **Librarian ingest:** if the librarian has its own agent, the orchestrator tells it to ingest the wave diff (one ingest per wave, not per task). While the orchestrator hosts the librarian, it doesn't read the diff. It records one line per wave (what merged, what changed for later tasks), and proposes promoting the librarian if waves pile up.
 8. **Orchestrator cleans up** worktrees for the completed wave and spawns wave N+1
 
 ## Merge-reviewer brief
@@ -96,7 +96,7 @@ If there are problems, signal the orchestrator with what's wrong and which worke
 
 ## Librarian behavior in dogfood mode
 
-The librarian works the same as normal mode with two differences:
+Whoever holds the librarian role (its own agent, or the orchestrator while hosting it, per § Wave merge flow step 7) works the same as normal mode, with two differences:
 
 - **No ticket transitions** — skip MCP calls to transition tickets. The task file's `status:` field is the source of truth, but the librarian doesn't need to update it.
 - **Wave-level ingestion** — instead of ingesting per-PR, the librarian ingests one combined diff per wave after the merge-reviewer merges to main.
