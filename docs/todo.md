@@ -7,8 +7,9 @@ Small items noticed along the way and parked for later. Bigger ideas go in [road
 - **`project read <role> --lines 40` shows only blank lines right after a spawn.** Claude Code pads the screen, so the last 40 lines are empty. 80 lines worked. Either trim trailing blank lines in `read` or raise the harness's line count.
 - **`project prompt … --wait` prints herdr's raw JSON result** to stdout. That's noise in an agent's context. Print nothing, or one line.
 - **UNBLOCKED is logged as type `PROMPT`** in the signal log, while READY, STARTING and COMPLETE get their own types. Add it to the type detection.
-- **The watcher sends its WATCH ack back to the librarian:** one extra signal per WATCH, against signal economy. Its role definition should say to acknowledge only in its own output.
-- **The librarian named pane IDs in its output** despite being told not to look them up. Most likely `project prompt` echoes the pane ID. Drop pane IDs from user-facing CLI output.
+- **The watcher sends its WATCH ack back to the librarian:** one extra signal per WATCH, against signal economy. It didn't happen on the step 2 run, so it's model variance. Still worth one line in the watcher's role definition: acknowledge only in your own output.
+- **The librarian named pane IDs in its output** despite being told not to look them up. It didn't happen on the step 2 run either. If it comes back, check whether `project prompt` echoes the pane ID.
+- **The dry run doesn't start clean.** `project open DRY-RUN` overwrites the leftover state file but keeps the old signal log, so `project log` mixes in earlier runs. The harness should remove `DRY-RUN.json` and its log before `open`, or `open` should rotate the log.
 
 ## Other
 

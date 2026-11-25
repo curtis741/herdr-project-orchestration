@@ -8,72 +8,24 @@ set -euo pipefail
 #
 # State file: ~/.herdr/projects/<project-name>.json
 # Signal log: ~/.herdr/projects/<project-name>.signals.log
-# Project name comes from: HERDR_PROJECT env var (injected via herdr tab create --env)
+# Project name comes from: HERDR_PROJECT env var (injected into every spawned tab/workspace)
 
 PROJECTS_DIR="$HOME/.herdr/projects"
 mkdir -p "$PROJECTS_DIR"
 
-# Deliver a prompt to an agent pane without clobbering a human's half-typed draft.
-# `herdr agent prompt` types into the input box, so any draft gets concatenated
-# with the incoming message. Ctrl+S is Claude Code's stash: it parks the draft,
-# and Claude Code restores it automatically after the next submit. On an empty
-# input it's a no-op. Same args as `herdr agent prompt`.
-_prompt() {
-  herdr agent send-keys "$1" ctrl+s >/dev/null 2>&1 || true
-  herdr agent prompt "$@"
-}
-
-# --- Backend primitives (classic herdr) ---
-# Everything below this banner that touches `herdr` directly is the transport.
-# Skills never call these: they use role-addressed subcommands only.
-
-# Create a tab in a workspace. Prints "<pane_id> <tab_id>".
-# Usage: _h_tab_create <workspace-id> <cwd> <label> <project-name>
-_h_tab_create() {
-  local ws="$1" cwd="$2" label="$3" project="$4" out pane tab
-  out=$(herdr tab create --workspace "$ws" --cwd "$cwd" --label "$label" \
-    --env "HERDR_PROJECT=$project" --no-focus 2>&1) || {
-    echo "error: failed to create tab" >&2
-    echo "$out" >&2
-    return 1
-  }
-  pane=$(echo "$out" | jq -r '.result.root_pane.pane_id // empty')
-  tab=$(echo "$out" | jq -r '.result.tab.tab_id // .result.root_pane.tab_id // empty')
-  if [[ -z "$pane" ]]; then
-    echo "error: tab create returned no pane ID" >&2
-    echo "$out" >&2
-    return 1
-  fi
-  echo "$pane $tab"
-}
-
-# Start a claude agent in a pane, retrying while the pane shell boots.
-# Usage: _h_agent_start <pane_id> <name> [claude args...]
-_h_agent_start() {
-  local pane="$1" name="$2"; shift 2
-  local attempts=0
-  while ! herdr agent start "$name" --kind claude --pane "$pane" -- "$@" 2>/dev/null \
-      | jq -e '.result' >/dev/null 2>&1; do
-    attempts=$((attempts + 1))
-    if [[ $attempts -ge 10 ]]; then
-      echo "error: pane $pane not ready after 5s — failed to start agent $name" >&2
-      return 1
-    fi
-    sleep 0.5
-  done
-}
-
-# Session ID of the agent in a pane (empty if unknown).
-_h_session() {
-  herdr agent get "$1" 2>/dev/null \
-    | jq -r '.result.agent.agent_session.value // empty' 2>/dev/null || true
-}
-
-# Agent state of a pane: working|idle|blocked|done|unknown (empty if unreachable).
-_h_state() {
-  herdr agent get "$1" 2>/dev/null \
-    | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || true
-}
+# --- Backend ---
+# All terminal/agent transport lives in backend/<name>.sh (be_* functions).
+# Resolve this script's real path (it is installed as a symlink) to find it.
+_src="${BASH_SOURCE[0]}"
+while [[ -L "$_src" ]]; do
+  _dir="$(cd -P "$(dirname "$_src")" && pwd)"
+  _src="$(readlink "$_src")"
+  [[ "$_src" != /* ]] && _src="$_dir/$_src"
+done
+PROJECT_SCRIPT_DIR="$(cd -P "$(dirname "$_src")" && pwd)"
+unset _src _dir
+# shellcheck source=backend/herdr.sh
+source "$PROJECT_SCRIPT_DIR/backend/herdr.sh"
 
 # --- Auto-update check (never blocks) ---
 _update_check() {
@@ -100,27 +52,8 @@ _update_check() {
   # Write today's date so concurrent invocations don't all spawn checks
   echo "$today" > "$marker"
 
-  # Background: compare installed SHA with remote HEAD
-  (
-    local plugin_info
-    plugin_info=$(herdr plugin list 2>/dev/null) || exit 0
-    local entry
-    entry=$(echo "$plugin_info" | grep 'project-orchestration' | grep 'github:') || exit 0
-    local installed_sha
-    installed_sha=$(echo "$entry" | grep -oE '@[0-9a-f]+' | tr -d '@') || exit 0
-    local repo_ref
-    repo_ref=$(echo "$entry" | grep -oE 'github:[^@]+' | sed 's/github://') || exit 0
-    local owner="${repo_ref%%/*}"
-    local repo="${repo_ref#*/}"
-
-    local remote_sha
-    remote_sha=$(git ls-remote "https://github.com/$owner/$repo.git" HEAD 2>/dev/null \
-      | awk '{print $1}') || exit 0
-
-    if [[ -n "$remote_sha" && -n "$installed_sha" && "$remote_sha" != "$installed_sha" ]]; then
-      echo "project: plugin update available — run 'herdr plugin update' to get the latest" > "$cache"
-    fi
-  ) &>/dev/null &
+  # Background: backend compares the installed version with upstream
+  (be_update_check "$cache") &>/dev/null &
   disown
 }
 
@@ -321,7 +254,7 @@ cmd_start() {
     exit 1
   fi
 
-  if ! command -v herdr &>/dev/null; then
+  if ! be_available; then
     echo "error: herdr CLI not found" >&2
     exit 1
   fi
@@ -332,32 +265,15 @@ cmd_start() {
   fi
 
   # Create the workspace
-  local ws_output
-  ws_output=$(herdr workspace create --cwd "$PWD" --label "$label" --env "HERDR_PROJECT=$name" --no-focus 2>&1) || {
-    echo "error: failed to create workspace" >&2
-    echo "$ws_output" >&2
-    exit 1
-  }
-  local ws_id
-  ws_id=$(echo "$ws_output" | jq -r '.result.workspace.workspace_id') || {
-    echo "error: could not parse workspace ID from herdr output" >&2
-    echo "$ws_output" >&2
-    exit 1
-  }
-  if [[ -z "$ws_id" || "$ws_id" == "null" ]]; then
-    echo "error: workspace creation returned no ID" >&2
-    echo "$ws_output" >&2
-    exit 1
-  fi
-  local pane_id
-  pane_id=$(echo "$ws_output" | jq -r '.result.root_pane.pane_id')
+  local ws_id pane_id
+  read -r ws_id pane_id < <(be_workspace_create "$PWD" "$label" "$name" false) || exit 1
   echo "workspace created: $ws_id (pane $pane_id)" >&2
 
   # Initialize the project with the workspace ID
   eval "$(cmd_init "$name" "$ws_id")"
 
   # Wait for the pane shell to be ready, then start the agent
-  _h_agent_start "$pane_id" orchestrator -n orchestrator || exit 1
+  be_agent_start "$pane_id" orchestrator -n orchestrator || exit 1
   echo "orchestrator agent started in $pane_id" >&2
 
   # Register the orchestrator with the correct pane ID
@@ -365,7 +281,7 @@ cmd_start() {
   cmd_register orchestrator "$pane_id"
 
   # Prompt the orchestrator to load the skill
-  _prompt "$pane_id" "/start-project $name" >&2
+  be_prompt "$pane_id" "/start-project $name" >&2
 
   echo "project started: $name (workspace $ws_id, pane $pane_id)" >&2
 }
@@ -387,9 +303,9 @@ cmd_register() {
   local f
   f="$(ensure_state)"
 
-  # If no session_id provided, try to get it from herdr
+  # If no session_id provided, ask the backend
   if [[ -z "$session_id" ]]; then
-    session_id="$(_h_session "$pane_id")"
+    session_id="$(be_session "$pane_id")"
   fi
 
   # Re-registering a role (e.g. after DISTILL takeover) keeps the prior session ID
@@ -413,7 +329,7 @@ cmd_register() {
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
-      _prompt "$orch_pane" "READY — $role" 2>/dev/null || true
+      be_prompt "$orch_pane" "READY — $role" 2>/dev/null || true
       log_signal "$role" "orchestrator" "READY" "$role registered"
     fi
   fi
@@ -476,7 +392,7 @@ cmd_stop() {
 
   # Capture session ID before stopping (it may not be in the state file yet)
   local sid
-  sid="$(_h_session "$pane")"
+  sid="$(be_session "$pane")"
 
   local tmp="${f}.tmp.$$"
   jq --arg role "$role" --arg sid "$sid" \
@@ -485,7 +401,7 @@ cmd_stop() {
     "$f" > "$tmp" && mv "$tmp" "$f"
   log_signal "orchestrator" "$role" "STOP" "$role stopped"
   if $close; then
-    herdr pane close "$pane" >/dev/null 2>&1 || true
+    be_close_pane "$pane"
     echo "stopped: $role (session preserved, pane closed)"
   else
     echo "stopped: $role (session preserved)"
@@ -560,7 +476,7 @@ cmd_prompt() {
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
-      _prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original message: $message" 2>/dev/null || true
+      be_prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original message: $message" 2>/dev/null || true
       log_signal "${caller:-unknown}" "orchestrator" "NEED" "$role stopped — escalated. Original: $message"
       echo "escalated to orchestrator: $role is stopped" >&2
     else
@@ -594,7 +510,7 @@ cmd_prompt() {
   fi
 
   # shellcheck disable=SC2086
-  _prompt "$pane" "$message" $wait_flag $timeout_flag
+  be_prompt "$pane" "$message" $wait_flag $timeout_flag
 }
 
 cmd_ask() {
@@ -649,7 +565,7 @@ cmd_ask() {
     local orch_pane
     orch_pane="$(read_pane "$f" "orchestrator")"
     if [[ -n "$orch_pane" ]]; then
-      _prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original question: $message" 2>/dev/null || true
+      be_prompt "$orch_pane" "NEED — ${caller:+$caller needs }$role (stopped). Original question: $message" 2>/dev/null || true
       echo "escalated to orchestrator: $role is stopped" >&2
     else
       echo "error: $role is stopped and orchestrator is not reachable" >&2
@@ -665,7 +581,7 @@ cmd_ask() {
 
   # Send the prompt and wait for the agent to finish
   local prompt_result
-  prompt_result=$(_prompt "$pane" "$message" --wait --timeout "$timeout" 2>&1)
+  prompt_result=$(be_prompt "$pane" "$message" --wait --timeout "$timeout" 2>&1)
   local prompt_exit=$?
 
   if [[ $prompt_exit -ne 0 ]]; then
@@ -674,7 +590,7 @@ cmd_ask() {
   fi
 
   # Read the agent's response from its pane output (raw text, not JSON)
-  herdr agent read "$pane" --source recent-unwrapped --lines "$lines" 2>/dev/null
+  be_read "$pane" "$lines"
 }
 
 cmd_read() {
@@ -702,7 +618,7 @@ cmd_read() {
     exit 1
   fi
 
-  herdr agent read "$pane" --source recent-unwrapped --lines "$lines" 2>/dev/null
+  be_read "$pane" "$lines"
 }
 
 cmd_roster() {
@@ -738,7 +654,7 @@ cmd_status() {
       exit 1
     fi
     local st
-    st="$(_h_state "$one_pane")"
+    st="$(be_state "$one_pane")"
     echo "${st:-unreachable}"
     return 0
   fi
@@ -758,7 +674,7 @@ cmd_status() {
     if [[ "$is_stopped" == "true" ]]; then
       status="stopped"
     else
-      status="$(_h_state "$pane")"; status="${status:-unreachable}"
+      status="$(be_state "$pane")"; status="${status:-unreachable}"
     fi
     local ticket_info
     ticket_info=$(jq -r --arg role "$role" '
@@ -799,8 +715,8 @@ _research_target() {
   # Only "working" is busy — "done" means the agent finished its turn and is
   # waiting for input, same as idle.
   local status
-  status=$(herdr agent get "$target_pane" 2>/dev/null \
-    | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unknown")
+  status=$(be_state "$target_pane")
+  status="${status:-unknown}"
   if [[ "$status" == "working" ]]; then
     echo "error: $target is busy ($status) — try again later" >&2
     exit 1
@@ -829,7 +745,7 @@ cmd_research() {
     callback=" Reply with: project prompt $my_role '<your answer>'"
   fi
 
-  _prompt "$target_pane" "${prefix}RESEARCH — $question${callback}" >/dev/null
+  be_prompt "$target_pane" "${prefix}RESEARCH — $question${callback}" >/dev/null
   log_signal "${my_role:-unknown}" "$target" "RESEARCH" "$question"
   echo "sent to $target${my_role:+ (reply will come back to $my_role)}"
 }
@@ -851,7 +767,7 @@ cmd_punt() {
   read -r target target_pane <<<"$routed"
 
   local from="${my_role:-an agent}"
-  _prompt "$target_pane" "FROM($from): PUNT — $problem
+  be_prompt "$target_pane" "FROM($from): PUNT — $problem
 You own this — $from is not waiting on an answer. Investigate, decide what should happen, and act (create a ticket, flag the orchestrator, or ask the user). Only message $from if the outcome changes their current ticket, and then in one line." >/dev/null
   log_signal "$from" "$target" "PUNT" "$problem"
   echo "punted to $target — it owns this now; you'll only hear back if it affects your ticket"
@@ -953,12 +869,12 @@ cmd_spinoff() {
   }
 
   local pane_id tab_id
-  read -r pane_id tab_id < <(_h_tab_create "$ws" "$repo_path" "$name — spinoff" "$project") || true
+  read -r pane_id tab_id < <(be_tab_create "$ws" "$repo_path" "$name — spinoff" "$project") || true
   [[ -n "$pane_id" ]] || exit 1
 
   local short_title="$title"
   [[ ${#short_title} -gt 40 ]] && short_title="${short_title:0:37}..."
-  _h_agent_start "$pane_id" "$name" -n "$name — spinoff: $short_title" || exit 1
+  be_agent_start "$pane_id" "$name" -n "$name — spinoff: $short_title" || exit 1
 
   # Pre-register so the worker shows up in roster/status/cleanup immediately.
   # The worker's own 'project register' keeps these fields.
@@ -971,7 +887,7 @@ cmd_spinoff() {
        spinoff: {from: $from, title: $title, brief: $brief, notify: $notify}
      }' "$f" > "$tmp" && mv "$tmp" "$f"
 
-  _prompt "$pane_id" "Spinoff worker $name for project $epic — a throwaway worker on one scoped fix.
+  be_prompt "$pane_id" "Spinoff worker $name for project $epic — a throwaway worker on one scoped fix.
 Your role is '$name'. Your worktree is .worktrees/$id/ (branch $id).
 Your brief: $brief_file
 
@@ -981,7 +897,7 @@ Run /project-worker and follow § Spinoff mode." >/dev/null
   local orch_pane
   orch_pane="$(read_pane "$f" "orchestrator")"
   if [[ -n "$orch_pane" && "$from" != "orchestrator" ]]; then
-    _prompt "$orch_pane" "SPINOFF — $from spun off \"$title\" to $name. FYI only — it reports through the librarian like any worker; no action needed." >/dev/null 2>&1 || true
+    be_prompt "$orch_pane" "SPINOFF — $from spun off \"$title\" to $name. FYI only — it reports through the librarian like any worker; no action needed." >/dev/null 2>&1 || true
   fi
 
   echo "spun off to $name (pane $pane_id, worktree .worktrees/$id)"
@@ -1018,7 +934,7 @@ cmd_spinoff_done() {
     from_pane="$(read_pane "$f" "$from")"
     from_stopped=$(jq -r --arg r "$from" '.agents[$r].stopped // false' "$f")
     if [[ -n "$from_pane" && "$from_stopped" != "true" ]]; then
-      _prompt "$from_pane" "FROM($me): SPINOFF_DONE — \"$title\": $outcome" >/dev/null 2>&1 || true
+      be_prompt "$from_pane" "FROM($me): SPINOFF_DONE — \"$title\": $outcome" >/dev/null 2>&1 || true
     fi
   fi
   log_signal "$me" "${from}" "SPINOFF_DONE" "$title: $outcome"
@@ -1026,8 +942,8 @@ cmd_spinoff_done() {
   cmd_stop "$me" >/dev/null
   echo "spinoff finished — closing this tab"
   local tab
-  tab=$(herdr pane get "${HERDR_PANE_ID:-}" 2>/dev/null | jq -r '.result.pane.tab_id // empty' 2>/dev/null || true)
-  [[ -n "$tab" ]] && herdr tab close "$tab" >/dev/null 2>&1 || true
+  tab=$(be_tab_of "${HERDR_PANE_ID:-}")
+  [[ -n "$tab" ]] && be_tab_close "$tab" 2>/dev/null || true
 }
 
 cmd_log() {
@@ -1124,9 +1040,7 @@ cmd_recover() {
   # 1. Check workspace
   echo "## Workspace"
   if [[ -n "$ws" ]]; then
-    local ws_status
-    ws_status=$(herdr workspace get "$ws" 2>/dev/null | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null || true)
-    if [[ -n "$ws_status" ]]; then
+    if be_workspace_exists "$ws"; then
       echo "  workspace $ws: reachable"
     else
       echo "  workspace $ws: STALE (not found — needs new workspace)"
@@ -1162,7 +1076,7 @@ cmd_recover() {
     else
       # Check if the pane is still reachable
       local agent_state
-      agent_state=$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // empty' 2>/dev/null || true)
+      agent_state=$(be_state "$pane")
       if [[ -n "$agent_state" ]]; then
         pane_ok="yes"
         state_label="$agent_state"
@@ -1311,7 +1225,7 @@ cmd_checkin() {
     if [[ "$is_stopped" == "true" ]]; then
       status="stopped"
     else
-      status=$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unreachable")
+      status=$(be_state "$pane"); status="${status:-unreachable}"
     fi
     printf "  %-16s %-12s ticket: %s\n" "$role" "[$status]" "$ticket"
     case "$status" in
@@ -1472,7 +1386,7 @@ cmd_observe() {
   echo "═══════════════════════════════════════════════════"
   echo
 
-  # --- Collect agent data (one herdr call per live agent, cached in temp file) ---
+  # --- Collect agent data (one backend call per live agent, cached in temp file) ---
   local roles
   roles=$(jq -r '.agents | keys[]' "$f")
 
@@ -1488,7 +1402,7 @@ cmd_observe() {
     if [[ "$is_stopped" == "true" ]]; then
       status="stopped"
     else
-      status=$(herdr agent get "$pane" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unreachable")
+      status=$(be_state "$pane"); status="${status:-unreachable}"
     fi
     printf '%s\t%s\t%s\n' "$role" "$status" "$ticket" >> "$cache_file"
   done
@@ -1737,7 +1651,7 @@ _dump_agents() {
     local final="$dir/$role.final.md"
     # Archive a previous dump so "file exists" means "written this time"
     [[ -f "$final" ]] && mv "$final" "$dir/$role.final.$stamp.md"
-    if [[ -z "$pane" ]] || ! herdr agent get "$pane" >/dev/null 2>&1; then
+    if [[ -z "$pane" ]] || ! be_alive "$pane"; then
       echo "gone" > "$tmpd/$role.status"
       continue
     fi
@@ -1747,7 +1661,7 @@ If there's nothing, write no file.
 Don't signal or prompt other agents. Reply with one line: 'dumped' or 'nothing to dump'."
     log_signal "${caller:-user}" "$role" "DUMP" "project $verb"
     (
-      if out=$(_prompt "$pane" "$msg" --wait --until idle --until done --timeout $((timeout * 1000)) 2>&1); then
+      if out=$(be_prompt "$pane" "$msg" --wait --until idle --until done --timeout $((timeout * 1000)) 2>&1); then
         echo "ok" > "$tmpd/$role.status"
       elif [[ "$out" == *agent_blocked* ]]; then
         echo "blocked" > "$tmpd/$role.status"
@@ -1776,7 +1690,7 @@ Don't signal or prompt other agents. Reply with one line: 'dumped' or 'nothing t
           result="nothing to dump"
         fi
         cmd_stop "$role" >/dev/null
-        [[ "$status" == "ok" ]] && herdr pane close "$pane" >/dev/null 2>&1 || true
+        [[ "$status" == "ok" ]] && be_close_pane "$pane"
         [[ "$status" == "ok" ]] && result="$result (stopped, pane closed)"
         ;;
       blocked) result="LEFT RUNNING — blocked on a prompt in $pane; answer it, then re-run"; left=$((left + 1)) ;;
@@ -1839,12 +1753,12 @@ cmd_reset() {
     orch_pane="$(read_pane "$f" "orchestrator")"
     local orch_stopped
     orch_stopped=$(jq -r '.agents.orchestrator.stopped // false' "$f")
-    if $handoff || [[ -z "$orch_pane" || "$orch_stopped" == "true" ]] || ! herdr agent get "$orch_pane" >/dev/null 2>&1; then
+    if $handoff || [[ -z "$orch_pane" || "$orch_stopped" == "true" ]] || ! be_alive "$orch_pane"; then
       echo "error: project reset runs in the orchestrator's pane, and no live orchestrator was found" >&2
       echo "  to pause everything instead: project --project $name dump" >&2
       exit 1
     fi
-    _prompt "$orch_pane" "RESET — ${caller:-the user} asked for a full project reset. Follow the skill's § Resetting the project: run 'project reset'." >/dev/null
+    be_prompt "$orch_pane" "RESET — ${caller:-the user} asked for a full project reset. Follow the skill's § Resetting the project: run 'project reset'." >/dev/null
     log_signal "${caller:-user}" "orchestrator" "RESET" "reset requested"
     echo "asked the orchestrator ($orch_pane) to run the reset"
     return 0
@@ -1929,11 +1843,11 @@ _reset_handoff() {
   epic="$(echo "$name" | tr '[:lower:]' '[:upper:]')"
 
   local pane_id tab_id
-  read -r pane_id tab_id < <(_h_tab_create "$ws" "$PWD" "orchestrator" "$name") || true
+  read -r pane_id tab_id < <(be_tab_create "$ws" "$PWD" "orchestrator" "$name") || true
   [[ -n "$pane_id" ]] || exit 1
-  _h_agent_start "$pane_id" orchestrator -n orchestrator || exit 1
+  be_agent_start "$pane_id" orchestrator -n orchestrator || exit 1
 
-  _prompt "$pane_id" "/start-project $epic
+  be_prompt "$pane_id" "/start-project $epic
 
 You are a fresh orchestrator taking over after a project RESET. Before Step 1:
 1. Run: project register orchestrator
@@ -1979,12 +1893,12 @@ cmd_retire() {
     jq --arg r "$arg" 'del(.agents[$r].predecessor_pane)' "$f" > "$tmp" && mv "$tmp" "$f"
   fi
   local tab
-  tab=$(herdr pane get "$old_pane" 2>/dev/null | jq -r '.result.pane.tab_id // empty' 2>/dev/null || true)
+  tab=$(be_tab_of "$old_pane")
   if [[ -z "$tab" ]]; then
     echo "predecessor already closed"
     return 0
   fi
-  herdr tab close "$tab" >/dev/null
+  be_tab_close "$tab"
   local caller
   caller="$(resolve_caller "$f")"
   log_signal "${caller:-unknown}" "-" "SHUTDOWN" "retired predecessor of $arg ($old_pane)"
@@ -1994,11 +1908,11 @@ cmd_retire() {
 # Create a workspace and initialise a project in it (test harnesses: the real
 # orchestrator is already inside a project). Prints the HERDR_PROJECT export.
 cmd_open() {
-  local name="" label="" focus="--no-focus"
+  local name="" label="" focus="false"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --label) label="${2:-}"; shift 2 ;;
-      --focus) focus="--focus"; shift ;;
+      --focus) focus="true"; shift ;;
       *) name="$1"; shift ;;
     esac
   done
@@ -2006,14 +1920,8 @@ cmd_open() {
     echo "usage: project open <project-name> [--label TEXT] [--focus]" >&2
     exit 1
   fi
-  local out ws_id
-  out=$(herdr workspace create --cwd "$PWD" --label "${label:-$name}" --env "HERDR_PROJECT=$name" "$focus" 2>&1) || {
-    echo "error: failed to create workspace" >&2; echo "$out" >&2; exit 1
-  }
-  ws_id=$(echo "$out" | jq -r '.result.workspace.workspace_id // empty')
-  if [[ -z "$ws_id" ]]; then
-    echo "error: workspace creation returned no ID" >&2; echo "$out" >&2; exit 1
-  fi
+  local ws_id _pane
+  read -r ws_id _pane < <(be_workspace_create "$PWD" "${label:-$name}" "$name" "$focus") || exit 1
   cmd_init "$name" "$ws_id"
 }
 
@@ -2026,7 +1934,7 @@ cmd_close() {
     echo "error: project has no workspace_id" >&2
     exit 1
   fi
-  herdr workspace close "$ws" >/dev/null
+  be_workspace_close "$ws"
   echo "workspace closed: $(read_field "$f" "project")"
 }
 
@@ -2043,12 +1951,12 @@ cmd_rename() {
     echo "error: role '$role' not registered" >&2
     exit 1
   fi
-  tab=$(herdr pane get "$pane" 2>/dev/null | jq -r '.result.pane.tab_id // empty' 2>/dev/null || true)
+  tab=$(be_tab_of "$pane")
   if [[ -z "$tab" ]]; then
     echo "error: could not find the tab for $role" >&2
     exit 1
   fi
-  herdr tab rename "$tab" "$label" >/dev/null
+  be_tab_rename "$tab" "$label"
   echo "renamed: $role → $label"
 }
 
@@ -2105,7 +2013,7 @@ cmd_spawn() {
 
   local old_pane
   old_pane="$(read_pane "$f" "$role")"
-  if [[ -n "$old_pane" ]] && [[ "$(jq -r --arg r "$role" '.agents[$r].stopped // false' "$f")" != "true" ]]       && ! $takeover && [[ -n "$(_h_state "$old_pane")" ]]; then
+  if [[ -n "$old_pane" ]] && [[ "$(jq -r --arg r "$role" '.agents[$r].stopped // false' "$f")" != "true" ]]       && ! $takeover && [[ -n "$(be_state "$old_pane")" ]]; then
     echo "error: role '$role' is live in an existing pane — 'project stop $role --close' first, or pass --takeover" >&2
     exit 1
   fi
@@ -2121,9 +2029,9 @@ cmd_spawn() {
   fi
 
   local pane_id tab_id
-  read -r pane_id tab_id < <(_h_tab_create "$ws" "$cwd" "$label" "$project") || true
+  read -r pane_id tab_id < <(be_tab_create "$ws" "$cwd" "$label" "$project") || true
   [[ -n "$pane_id" ]] || exit 1
-  _h_agent_start "$pane_id" "$role" "${claude_args[@]}" || exit 1
+  be_agent_start "$pane_id" "$role" "${claude_args[@]}" || exit 1
 
   # Pre-register so the role shows up in roster/status immediately. A takeover
   # leaves routing on the old agent until the successor registers itself.
@@ -2137,7 +2045,7 @@ cmd_spawn() {
   log_signal "orchestrator" "$role" "SPAWN" "$role$($resume && echo ' (resume)')"
 
   if $have_task; then
-    _prompt "$pane_id" "$task" ${wait_args[@]+"${wait_args[@]}"} >/dev/null
+    be_prompt "$pane_id" "$task" ${wait_args[@]+"${wait_args[@]}"} >/dev/null
   fi
   echo "spawned: $role"
 }
