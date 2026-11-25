@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.0
+
+- **Projects without an epic.** Leave the key empty (`project start "" "<goal>"`, or an empty epic key in the panel's Start dialog) or use a `WORK-` key. The project gets the next `work-NNN`, the label is its goal, and there's no tracker: the researcher writes task files to `$(project dir)/tasks/`, workers update their task's `status:` and still open PRs, and the librarian makes no transitions. At plan confirmation the orchestrator offers to create an epic and tickets instead. Shared rules are in `start-project/task-files.md`.
+- **Dogfood (`DOG-`) is ticketless mode plus wave merges**, and runs only inside a checkout of the plugin repo. Its task files moved to `$(project dir)/tasks/`.
+
 ## 0.12.1
 
 - **The researcher asks you directly.** On an ambiguity or decision the code can't settle, it asks with AskUserQuestion in its own pane, at the moment it hits it. It no longer hands decisions to the orchestrator to relay. It tells the orchestrator only when the answer changes tickets or dependencies, or when its question goes unanswered.

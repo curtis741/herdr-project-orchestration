@@ -2,57 +2,26 @@
 
 **The point is to exercise agent orchestration** — spawning workers, wave sequencing, librarian handoffs, merge coordination, signal flow. Everything unique to real projects (ticket trackers, dependency DAGs, CI monitoring) is stripped away. What's left is the multi-agent machinery itself.
 
-Tasks live on disk, waves merge through a review branch, and the orchestrator uses this file as the "tracker adapter." Prefix the epic key with `DOG-` and the orchestrator loads this mode.
+Tasks live in task files, waves merge through a review branch. Prefix the epic key with `DOG-` and the orchestrator loads this mode.
 
 ## When to use
 
 - Testing orchestration skill changes by running them
 - Exercising the full agent lifecycle without project overhead
-- Batching improvements when a tracker isn't worth the setup
+- Batching improvements to this repo
 
-## Task files
+For a real project without a tracker, use ticketless mode (`WORK-` or an empty key) instead.
 
-Each run's tasks live in their own folder, `docs/dogfood/tasks/<project-key>/` (gitignored: they're ephemeral). Read only that folder. Files from other runs and agents' notes sit elsewhere under `docs/dogfood/tasks/` and are not this run's tasks. Each task is a markdown file:
+## Tasks
 
-```
-docs/dogfood/tasks/DOG-500/DOG-501.md
-docs/dogfood/tasks/DOG-500/DOG-502.md
-```
+Dogfood is ticketless mode (`skills/start-project/task-files.md`) plus a different way of shipping. Task files, the research phase and each role's tracker-free rules come from there. Tasks live in `$(project dir)/tasks/`, not in this repo. This file covers only what dogfood adds: no PRs, and waves merge through a review branch.
 
-Format:
-
-```markdown
----
-id: DOG-001
-title: Short description
-status: todo
-wave: 1
-blocked-by: []
----
-
-What needs to happen and why. Enough context for a worker to implement without asking questions.
-```
-
-Status values: `todo`, `in-progress`, `done`
-
-## Research phase
-
-**If the run's task folder already has tasks, skip this phase.** The orchestrator plans from the files. Otherwise there are no tasks, so the researcher gets its own agent right away (start-project's no-tasks rule). The user dumps raw ideas/feedback to it, and the researcher:
-
-1. Organizes ideas into discrete tasks
-2. Writes task files to `docs/dogfood/tasks/<project-key>/`
-3. Assigns wave numbers and blocked-by relationships
-4. Tells the librarian role the dependency summary directly. The librarian does NOT read task files (saves tokens).
-5. Reports the task list and DAG to the orchestrator
-
-The researcher decides what's a task vs. what's noise. Not every idea becomes a task.
+`DOG-` runs only inside a checkout of this repo. `project start` refuses it anywhere else, and the orchestrator stops if it isn't in one.
 
 ## Orchestrator behavior in dogfood mode
 
-When the epic key starts with `DOG-`:
+When the epic key starts with `DOG-`, on top of `task-files.md`:
 
-- **Read tasks** from `docs/dogfood/tasks/` instead of a tracker MCP
-- **No ticket transitions** — workers update `status:` in task files directly
 - **No PRs** — workers commit to their worktree branch but don't open draft PRs
 - **Wave merge** replaces PR-per-ticket (see below)
 - **No real DAG.** The task files group tasks into waves for logical ordering, but there are no blocking dependencies to enforce. The waves are just batches of concurrent work.
@@ -96,9 +65,8 @@ If there are problems, signal the orchestrator with what's wrong and which worke
 
 ## Librarian behavior in dogfood mode
 
-Whoever holds the librarian role (its own agent, or the orchestrator while hosting it, per § Wave merge flow step 7) works the same as normal mode, with two differences:
+Whoever holds the librarian role (its own agent, or the orchestrator while hosting it, per § Wave merge flow step 7) follows `task-files.md` (no transitions, no task-file reads), with one more difference:
 
-- **No ticket transitions** — skip MCP calls to transition tickets. The task file's `status:` field is the source of truth, but the librarian doesn't need to update it.
 - **Wave-level ingestion** — instead of ingesting per-PR, the librarian ingests one combined diff per wave after the merge-reviewer merges to main.
 
 Everything else is the same: store summaries, answer worker questions, detect unblocked tasks, advise on worker reuse.
@@ -107,7 +75,7 @@ Everything else is the same: store summaries, answer worker questions, detect un
 
 | Normal mode | Dogfood mode |
 |-------------|-------------|
-| Worker → librarian: `COMPLETE` | Worker → librarian: `DONE — DOG-XXX. <summary of changes>` |
+| Worker → librarian: `COMPLETE` | Worker → librarian: `DONE — dog-XXX-N. <summary of changes>` |
 | Librarian → watcher: `WATCH PR #N` | No watcher needed (no CI to monitor) |
 | Librarian transitions ticket | Worker updates task file status |
 | Orchestrator merges PR | Merge-reviewer merges wave branch |

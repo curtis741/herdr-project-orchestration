@@ -22,6 +22,7 @@ skills/
   start-project/librarian.md # Librarian role definition (read by agents, not a skill)
   start-project/watcher.md   # Watcher role definition (CI monitor, read by agents, not a skill)
   start-project/researcher.md # Researcher role definition (read by agents, not a skill)
+  start-project/task-files.md # Tracker stand-in for ticketless (WORK-) and dogfood (DOG-) projects
   project-worker/SKILL.md   # Worker skill
   dry-run-project/SKILL.md  # Signal protocol test harness
   guided-tour/SKILL.md     # DEMO mode — interactive onboarding via /start-project DEMO-XXX
@@ -29,8 +30,7 @@ docs/
   design.md                 # What the system is and how it works
   decisions.md              # Why: key decisions, open questions, feedback log
   roadmap.md                # What's next, short/medium term, ideas
-  dogfood.md                # Dogfood mode: run orchestration on itself without a tracker
-  dogfood/tasks/            # Ephemeral task files for dogfood runs (gitignored)
+  dogfood.md                # Dogfood mode: ticketless + wave merges, this repo only
 ```
 
 ## Running a project
@@ -45,11 +45,15 @@ When the epic key starts with `DEMO-`, the orchestrator runs a **guided tour** �
 
 Use this to onboard new users before running a real project.
 
+### Ticketless mode
+
+When the epic key starts with `WORK-`, or is empty (`project start "" "<goal>"` picks the next `work-NNN`), there's no tracker. The label is the goal; the researcher turns it into task files in `$(project dir)/tasks/`. Workers still open PRs. See `skills/start-project/task-files.md`.
+
 ### Dogfood mode
 
-When the epic key starts with `DOG-`, the orchestrator runs in **dogfood mode** — no external tracker, no PRs. Tasks are markdown files on disk, changes merge per-wave through a review branch. See `docs/dogfood.md` for the full protocol.
+When the epic key starts with `DOG-`, the orchestrator runs in **dogfood mode**: ticketless mode plus no PRs, with changes merging per-wave through a review branch. See `docs/dogfood.md` for the full protocol. It only runs inside a checkout of this repo; `project start` refuses it elsewhere.
 
-Use this when testing orchestration changes on this repo, or when a tracker isn't worth the overhead.
+Use this when testing orchestration changes on this repo.
 
 ## How to refine skills
 

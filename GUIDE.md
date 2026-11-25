@@ -46,6 +46,14 @@ project start APP-1234 "User Auth Migration"
 
 This creates a Herdr workspace, starts a Claude orchestrator agent, and tells it to run `/start-project APP-1234`. Switch to the new workspace to interact with it.
 
+**No epic yet?** Leave the key empty and say what you're working on:
+
+```bash
+project start "" "Split the job queues"
+```
+
+The project gets the next `work-NNN` key and has no tracker. The researcher turns your goal into task files in the project directory, and workers still open PRs. When the orchestrator confirms the plan, it offers to create an epic and tickets in your tracker instead. In the Projects panel, leave the epic key empty and fill in the label.
+
 **Option 2: Guided tour.** An interactive walkthrough that starts small (one worker, the orchestrator hosting the other roles), then offers to promote the researcher and librarian. You drive each step by talking to agents in their panes — one automatic signal chain fires so you can see the handoff:
 
 ```

@@ -49,6 +49,8 @@ All subsequent work happens in the worktree directory. Don't cd back to the repo
 
 The orchestrator sends your assignment after you report READY. It includes a ticket key, summary, and description. If any of these are missing, read the ticket from the tracker.
 
+**No tracker?** If `project name` starts with `work-` or `dog-`, read `~/.claude/skills/start-project/task-files.md` (Worker section) and follow it wherever this file says tracker, ticket or epic.
+
 Load the appropriate codebase context:
 
 Read `CLAUDE.md` at the repo root. If the repo has sub-project or package-specific CLAUDE.md files, load those for the areas you'll touch.

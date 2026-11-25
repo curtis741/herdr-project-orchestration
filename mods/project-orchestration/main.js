@@ -297,8 +297,8 @@ export default class ProjectOrchestration extends View {
   initStart(cx) {
     this.key = ""; this.label = ""; this.folder = focused()?.cwd ?? home();
     this.err = ""; this.starting = false; this.focusIn = "key";
-    this.keyIn = InputState.new({ placeholder: "epic key, e.g. APP-1234" });
-    this.labelIn = InputState.new({ placeholder: "label (default: the key)" });
+    this.keyIn = InputState.new({ placeholder: "epic key, e.g. APP-1234 (empty: no tracker)" });
+    this.labelIn = InputState.new({ placeholder: "label, e.g. User auth migration (required without a key)" });
     this.keyIn.on("change", (_e, cx) => { this.key = this.keyIn.value(); cx.notify(); });
     this.labelIn.on("change", (_e, cx) => { this.label = this.labelIn.value(); cx.notify(); });
     this.keyIn.on("submit", (_e, cx) => this.submit(cx));
@@ -312,7 +312,8 @@ export default class ProjectOrchestration extends View {
   submit(cx) {
     const key = this.key.trim();
     if (this.starting) return;
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(key)) { this.err = "Epic key: letters, digits, - _ . only"; cx.notify(); return; }
+    if (key && !/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(key)) { this.err = "Epic key: letters, digits, - _ . only"; cx.notify(); return; }
+    if (!key && !this.label.trim()) { this.err = "No epic key: say what you're working on in the label"; cx.notify(); return; }
     this.starting = true; this.err = ""; cx.notify();
     const label = this.label.trim() || key;
     cx.spawn(async (cx) => {
@@ -321,8 +322,9 @@ export default class ProjectOrchestration extends View {
           { cwd: this.folder, timeout: 180000 });
         if (r.code !== 0) throw new Error(tail(r.stderr || r.stdout));
         const ws = /workspace (\S+?)[,)]/.exec(r.stderr + r.stdout)?.[1];
+        const name = /project started: (\S+)/.exec(r.stderr + r.stdout)?.[1] ?? key;
         closeOverlay(props().overlay);
-        notify({ title: `Started ${key}`, body: `Orchestrator running in "${label}"`, level: "success" });
+        notify({ title: `Started ${name}`, body: `Orchestrator running in "${label}"`, level: "success" });
         if (ws) run("space.select", { id: ws });
       } catch (e) {
         this.err = String(e.message ?? e);

@@ -80,6 +80,8 @@ Your summaries are indexes. The code is the source of truth.
 
 ## Ticket lifecycle
 
+**No tracker?** If `project name` starts with `work-` or `dog-`, read `~/.claude/skills/start-project/task-files.md` (Librarian section) and follow it wherever this file says tracker, ticket or epic.
+
 Workers and the orchestrator send you lifecycle signals. Transition the ticket using the tracker's MCP tools when you receive one:
 
 | Signal | From | Transition |

@@ -76,6 +76,8 @@ project start <epic-key> "Project Label"
 
 Creates a Herdr workspace with a dedicated orchestrator agent and kicks off `/start-project` automatically. The orchestrator gets its own workspace so it doesn't share your session's context.
 
+No epic yet? `project start "" "What you're working on"` starts a ticketless project (`work-NNN`): task files instead of a tracker, PRs as usual.
+
 ### Try the demo first
 
 ```bash

@@ -107,8 +107,9 @@ usage() {
 Usage: project <command> [args...]
 
 Commands:
-  start <epic-key> [workspace-label]
-                                   Create workspace, start orchestrator, run /start-project
+  start [<epic-key>] [workspace-label]
+                                   Create workspace, start orchestrator, run /start-project.
+                                   Empty key ("") = ticketless project (work-NNN); the label is its goal
   open <project-name> [--label TEXT] [--focus]
                                    Create a workspace + project state (test harnesses; prints the HERDR_PROJECT export)
   close                            Close the project's workspace (all tabs)
@@ -365,12 +366,32 @@ cmd_init() {
   echo "export HERDR_PROJECT=$name"
 }
 
+# Next free key for a ticketless project: work-001, work-002, ...
+next_work_key() {
+  local n=1
+  while [[ -e "$PROJECTS_DIR/$(printf 'work-%03d' "$n").json" ]]; do n=$((n + 1)); done
+  printf 'work-%03d\n' "$n"
+}
+
+# True when the current directory is inside a checkout of this plugin's repo.
+# Dogfood (DOG-) runs only there: its wave-merge flow lives in docs/dogfood.md.
+in_plugin_repo() {
+  local top
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [[ -f "$top/docs/dogfood.md" ]] && grep -q 'herdr-plugins.project-orchestration' "$top/herdr-plugin.toml" 2>/dev/null
+}
+
 cmd_start() {
   local name="${1:-}"
   local label="${2:-}"
+  # No key: a ticketless project. Take the next free work-NNN.
   if [[ -z "$name" ]]; then
-    echo "usage: project start <epic-key> [workspace-label]" >&2
-    echo "  Creates a workspace, starts an orchestrator agent, and runs /start-project." >&2
+    name="$(next_work_key)"
+    echo "no epic key: ticketless project $name" >&2
+  fi
+  if [[ "$(echo "$name" | tr '[:upper:]' '[:lower:]')" == dog-* ]] && ! in_plugin_repo; then
+    echo "error: DOG- (dogfood) projects only run inside a checkout of the project-orchestration plugin repo" >&2
+    echo "  For a project without a tracker, leave the key empty or use WORK-<n>." >&2
     exit 1
   fi
 
@@ -397,7 +418,12 @@ cmd_start() {
   local root_pane="$pane_id"
   export HERDR_PROJECT="$name"
   _pre_start() { cmd_register orchestrator "$1" "$3"; }
-  _spawn_agent --pre-task _pre_start --root "$root_pane" --echo "$ws_id" "$PWD" "orchestrator" "$name" orchestrator "/start-project $name" -n orchestrator
+  # A ticketless project's goal is its label; pass it along so the orchestrator starts from it.
+  local task="/start-project $name"
+  if [[ "$(echo "$name" | tr '[:upper:]' '[:lower:]')" == work-* && "$label" != "$name" ]]; then
+    task="$task $label"
+  fi
+  _spawn_agent --pre-task _pre_start --root "$root_pane" --echo "$ws_id" "$PWD" "orchestrator" "$name" orchestrator "$task" -n orchestrator
   echo "orchestrator agent started in $pane_id" >&2
   [[ "$SPAWN_RC" -eq 0 ]] || exit "$SPAWN_RC"
 

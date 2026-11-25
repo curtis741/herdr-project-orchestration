@@ -19,10 +19,11 @@ If it fails, stop — this skill requires the project-orchestration plugin or mo
 
 ## Mode detection
 
-Parse the project key from the user's message (e.g. `APP-1234`).
+Parse the project key from the user's message (e.g. `APP-1234`). Prefixes are case-insensitive. Text after the key is the project's goal.
 
 - **`DEMO-` prefix** → guided tour mode. Run `/guided-tour` and stop — the tour skill handles everything.
-- **`DOG-` prefix** → dogfood mode. See `docs/dogfood.md`.
+- **`DOG-` prefix** → dogfood mode: read `task-files.md` (next to this file), then `docs/dogfood.md` in the repo. Dogfood runs only inside a checkout of this plugin's repo (it has `docs/dogfood.md` and `herdr-plugin.toml`). If the repo isn't one, stop and tell the user to use `WORK-` instead.
+- **`WORK-` prefix, or no key** → ticketless mode: no tracker. Read `task-files.md` (next to this file) and follow it wherever this skill says tracker, ticket or epic. With no key, `project start` (Step 3) picks the next `work-NNN`.
 - **Anything else** → normal mode (continue below).
 
 ## Step 1: Load the project
@@ -100,7 +101,7 @@ project register orchestrator
 eval "$(project start <project-name> "<epic human name> (APP-XXXX)")"
 ```
 
-The project name should be the lowercase project key (e.g. `app-1234`). The workspace label should be the project's human-readable name — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to.
+The project name should be the lowercase project key (e.g. `app-1234`). The workspace label should be the project's human-readable name — e.g. `"User Auth Migration (APP-1234)"`, not just the ticket key or a role name. The user sees this in their workspace list and needs to know which project it belongs to. Ticketless with no key: `project start "" "<goal>"`, which picks the next `work-NNN` and prints it.
 
 Every agent started with `project spawn` below resolves the same project state file automatically.
 
@@ -526,7 +527,7 @@ Four sources, all durable:
 | State file (`~/.herdr/projects/<name>.json`) | Agent roster, session IDs, ticket assignments, stopped/active flags |
 | Signal log (`~/.herdr/projects/<name>.signals.log`) | Full event sequence — who signaled what, when, in what order |
 | Git (branches + worktrees) | Work-in-progress code, which branches exist, what's committed |
-| Ticket tracker (or dogfood task files) | Ticket statuses — done, in-progress, todo |
+| Ticket tracker (or `$(project dir)/tasks/` without one) | Ticket statuses — done, in-progress, todo |
 
 From these four sources, reconstruct: which wave, which tasks done/in-progress/blocked, which worktrees exist, and what the librarian knows.
 
