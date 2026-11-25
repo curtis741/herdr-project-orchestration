@@ -376,6 +376,9 @@ export default class ProjectOrchestration extends View {
     for (const n of paused) if (!(n in this.files)) { this.files[n] = null; this.load(n, cx); }
     const pausedList = paused.filter((n) => isPaused(this.files[n]));
     const color = { working: t.working, blocked: t.blocked, done: t.done, idle: t.idle };
+    // The focused terminal (or a terminal.show replacement / peek), highlighted like the agents pane does.
+    const f = focused();
+    const focusedSet = new Set([f?.terminal, f?.shown, ...agents().filter((a) => a.focused).map((a) => a.address)].filter(Boolean));
     const mini = (id, text, fg, action) => div().id(id).px(6).py(2).rounded(5).text_size(11).text_color(fg)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(action).child(text);
 
@@ -384,8 +387,10 @@ export default class ProjectOrchestration extends View {
       const recycling = this.recycling.has(key);
       const confirming = this.recycleConfirm === key;
       const dot = div().w(8).h(8).rounded(4).flex_none().bg(color[r.status] ?? t.dim);
+      const on = Boolean(r.terminal) && focusedSet.has(r.terminal);
       const el = h_flex().id(`po-${p}-${r.role}-${r.terminal ?? "x"}`).gap(8).items_center().px(12).py(4)
-        .when(Boolean(r.terminal), (e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => focusTerminal(r.terminal)))
+        .when(on, (e) => e.bg(t.selected))
+        .when(Boolean(r.terminal),(e) => e.cursor_pointer().hover((s) => s.bg(t.hover)).on_click(() => focusTerminal(r.terminal)))
         .child(r.status === "working" ? dot.loop("opacity", { from: 0.35, to: 1, period: 1200 }) : dot)
         .child(div().flex_1().truncate().text_size(12.5).text_color(r.terminal ? t.foreground : t.muted).child(r.role))
         .when(Boolean(r.ticket), (e) => e.child(div().text_size(11).text_color(t.dim).child(r.ticket)))
