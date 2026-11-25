@@ -1,6 +1,6 @@
 # Dual-mode adoption: plugin (CLI) or mod (app)
 
-Status: plan, not started. Written 2026-11-24.
+Status: steps 1–5 done (5 by real use), 6 not wanted yet. Written 2026-11-24.
 
 ## Goal
 
@@ -71,7 +71,7 @@ While developing, `~/.config/herdr-app/mods/project-orchestration` is a symlink 
 3. **Add `backend/hc.sh`:** `--no-parent`, `<project>-<role>` names, `project`/`role` labels, roster from `hc ls`.
 4. **Add the mod:** panel, start dialog, setup and changelog in `init()`. Run `herdr-app check` after every change.
    *Check for 3 and 4:* `DEMO-` on the app. It covers spawn, send, read, roster and close.
-5. **Targeted checks on the app by hand,** for what the demo doesn't cover: more than one worker at a time (naming), spinoff, `dump` / `reset --handoff`, `recover`, and distilling the orchestrator while workers keep running. Or run the first real project on the new backend and watch those paths.
+5. **Checked by real use, not by hand (decided 2026-11-25).** The first real projects on the app exercise these paths: more than one worker at a time (naming), spinoff, `dump` / `reset --handoff`, `recover`, `--resume` keeping its session id, and distilling an agent while workers keep running. Worst case, one of them breaks and an agent does that step by hand with `hc`/`herdr-app do`. No work is lost: the predecessor stays alive in a takeover, and dump leaves stuck agents running. Fix bugs as they show up.
 6. **Later, only if wanted: list on herdr.dev.** A herdr.dev install copies only `mods/<name>/`, not the repo root, so the mod's `init()` would clone the repo at a pinned tag and run `setup.sh`. A listing also needs `RECIPE.md`, `preview.png` and the `herdr-mod` repo topic.
 
 `DOG-` isn't used for this work. The steps are sequential, so there's no parallel work for the orchestration to manage, and a dog-food run tests coordination, not the transport layer.
