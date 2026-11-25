@@ -85,3 +85,9 @@ One orchestrating session, starting fresh from this file, plus one fresh worker 
 - Does the classic `herdr` CLI keep working alongside the app long term, or is it on its way out? That decides how long the classic backend is worth keeping.
 - Hosted roles on the hc backend: is a label enough, or is the registry still needed for role → host?
 - What should the CHANGELOG-on-upgrade trigger be when the mod is a dev symlink and its version doesn't change on `git pull`?
+- After step 5: walk through install and upgrade end to end with the user, and how `setup.sh` runs under the plugin (build hook) versus the mod (`init()`).
+
+## Progress
+
+- Branch `dual-mode`. Step 1 is split as follows: `dual-1-cli` (project.sh + setup.sh, which defines the subcommand interface) runs first, then four parallel workers, one per skill file: start-project/SKILL.md, DESIGN.md, dry-run-project, guided-tour. A strict per-file split would have had every worker editing project.sh.
+- Checks for steps 1–2: the orchestrator runs in the Herdr app, so `dry-run-project` runs in a new classic workspace (`herdr workspace create`) and its result is read with `herdr agent read`.

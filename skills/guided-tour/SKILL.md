@@ -26,7 +26,7 @@ An interactive walkthrough of multi-agent project orchestration. You (the orches
 ## Prerequisites
 
 ```bash
-test "${HERDR_ENV:-}" = 1
+test -n "${HERDR_ENV:-}${HC_TERMINAL_ID:-}"
 which project
 ```
 
@@ -40,23 +40,17 @@ Check if a project is already initialized:
 echo $HERDR_PROJECT
 ```
 
-**If set** (`project start` already ran), the workspace exists — do NOT create another one. Get the workspace ID from the state file:
+**If set** (`project start` already ran), the workspace exists — do NOT create another one:
 
 ```bash
 project info
 project register orchestrator
 ```
 
-**If not set**, create the workspace and initialize:
+**If not set**, create the workspace and initialize the project in one step:
 
 ```bash
-herdr workspace create --cwd "$PWD" --label "Guided Tour (DEMO)" --focus
-```
-
-Note the workspace ID. Initialize the project:
-
-```bash
-eval "$(project init demo <workspace-id>)"
+eval "$(project open demo --label "Guided Tour (DEMO)" --focus)"
 project register orchestrator
 ```
 
@@ -75,14 +69,8 @@ Then spawn the researcher (see below). Optionally spawn the librarian now too so
 ### Spawn the researcher
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "researcher" --env HERDR_PROJECT=demo --no-focus
-herdr agent start demo-researcher --kind claude --pane <pane_id>
-```
-
-Boot the researcher:
-
-```bash
-herdr agent prompt <pane_id> "GUIDED TOUR — You are the project researcher.
+project spawn researcher --cwd "$PWD" --label "researcher" --wait --timeout 60000 --task - <<'EOF'
+GUIDED TOUR — You are the project researcher.
 
 Your blurb (say this if anyone asks what you do):
   I dig into detail and collapse it into tasks and domain notes.
@@ -105,20 +93,17 @@ If the user asks about your boundaries, explain: you investigate and propose tas
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'researcher'.
 
 Run: project register researcher
-Then reply 'ready' and wait for the user." --wait --timeout 60000
+Then reply 'ready' and wait for the user.
+EOF
 ```
+
+The boot text goes in the spawn (`--task`), not a later prompt.
 
 ### Spawn the librarian (pre-stage for step 2)
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "librarian" --env HERDR_PROJECT=demo --no-focus
-herdr agent start demo-librarian --kind claude --pane <pane_id>
-```
-
-Boot the librarian:
-
-```bash
-herdr agent prompt <pane_id> "GUIDED TOUR — You are the project librarian.
+project spawn librarian --cwd "$PWD" --label "librarian" --wait --timeout 60000 --task - <<'EOF'
+GUIDED TOUR — You are the project librarian.
 
 Your blurb (say this if anyone asks what you do):
   I only track tasks and project state. I receive signals and answer 'what's the status / what changed?'
@@ -148,7 +133,8 @@ All agents use 'project prompt <role> <message>' to communicate. Your role is 'l
 Do NOT load /project-librarian. Follow the protocol above and answer questions naturally.
 
 Run: project register librarian
-Then reply 'ready' and wait." --wait --timeout 60000
+Then reply 'ready' and wait.
+EOF
 ```
 
 Now wait. The user drives the next steps.
@@ -190,14 +176,8 @@ Tell the user:
 Spawn the worker:
 
 ```bash
-herdr tab create --workspace <workspace-id> --cwd "$PWD" --label "worker — DEMO-TASK-001" --env HERDR_PROJECT=demo --no-focus
-herdr agent start demo-worker --kind claude --pane <pane_id>
-```
-
-Boot the worker:
-
-```bash
-herdr agent prompt <pane_id> "GUIDED TOUR — You are the project worker for DEMO-TASK-001.
+project spawn demo-worker --cwd "$PWD" --label "worker — DEMO-TASK-001" --wait --timeout 60000 --task - <<'EOF'
+GUIDED TOUR — You are the project worker for DEMO-TASK-001.
 
 Your blurb (say this if anyone asks what you do):
   I get one ticket, one worktree, one clean context.
@@ -226,7 +206,8 @@ When the user tells you to go (or says 'do it', 'start', etc.):
 All agents use 'project prompt <role> <message>' to communicate. Your role is 'demo-worker'.
 Do NOT load /project-worker.
 
-Start with the boot sequence now." --wait --timeout 60000
+Start with the boot sequence now.
+EOF
 ```
 
 Wait for the READY signal from the worker. When it arrives, tell the user:
@@ -280,7 +261,7 @@ rm -f TOUR_NOTES.md
 **Do NOT close the workspace automatically.** Ask the user if they're ready to shut down. Only close the workspace when they confirm:
 
 ```bash
-herdr workspace close <workspace-id>
+project close
 ```
 
 ## What this teaches

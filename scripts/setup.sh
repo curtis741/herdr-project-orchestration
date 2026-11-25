@@ -90,24 +90,20 @@ WELCOME
 elif [[ "$old_version" != "$new_version" ]]; then
   echo "✓ Upgraded v$old_version → v$new_version"
 
-  # Notify running orchestrators
-  if [[ -d "$PROJECTS_DIR" ]] && command -v herdr &>/dev/null; then
+  # Notify running orchestrators (through the project CLI — no direct herdr calls)
+  if [[ -d "$PROJECTS_DIR" ]]; then
     for state_file in "$PROJECTS_DIR"/*.json; do
       [[ -f "$state_file" ]] || continue
-      orch_pane=$(jq -r '.agents.orchestrator.pane_id // empty' "$state_file" 2>/dev/null || true)
-      [[ -n "$orch_pane" ]] || continue
+      project_name=$(jq -r '.project // empty' "$state_file" 2>/dev/null || true)
+      [[ -n "$project_name" ]] || continue
 
-      # Check the orchestrator is actually alive
-      orch_status=$(herdr agent get "$orch_pane" 2>/dev/null \
-        | jq -r '.result.agent.agent_status // "unknown"' 2>/dev/null || echo "unknown")
-      [[ "$orch_status" != "unknown" ]] || continue
+      # Only notify an orchestrator that is actually alive
+      orch_status=$("$PLUGIN_DIR/scripts/project.sh" --project "$project_name" status orchestrator 2>/dev/null || true)
+      case "$orch_status" in ""|stopped|unreachable|unknown) continue ;; esac
 
-      project_name=$(jq -r '.project // empty' "$state_file" 2>/dev/null)
-      # Stash any half-typed draft first (Claude Code restores it after submit)
-      herdr agent send-keys "$orch_pane" ctrl+s >/dev/null 2>&1 || true
-      herdr agent prompt "$orch_pane" \
+      "$PLUGIN_DIR/scripts/project.sh" --project "$project_name" prompt orchestrator \
         "PLUGIN UPGRADE — project-orchestration v$old_version → v$new_version. Reload /start-project and tell your agents to reload their skills (/project-worker, /project-librarian)." \
-        2>/dev/null && \
+        >/dev/null 2>&1 && \
         echo "✓ Notified orchestrator for $project_name" || true
     done
   fi
