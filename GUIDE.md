@@ -10,9 +10,11 @@ Focused agents, each with its own context window:
 
 - **Orchestrator** — reads the project's tickets, builds a dependency graph, spawns workers wave by wave. Never touches code. Stays lightweight so it can run for the life of the project.
 - **Workers** — each gets one ticket, one git worktree, one clean context. Implements, tests, pushes, opens a draft PR, and shuts down. Fresh workers get what they need from the librarian.
-- **Librarian** — sits on main, ingests merged diffs, answers cross-worker questions, manages ticket transitions. Long-lived.
-- **Researcher** (optional) — investigates domain questions so workers don't have to research independently. Accumulated context is the value.
-- **Watcher** (optional) — monitors CI on open PRs, reports failures back to workers.
+- **Librarian** — sits on main, ingests merged diffs, answers cross-worker questions, manages ticket transitions.
+- **Researcher** — investigates domain questions so workers don't have to research independently. Accumulated context is the value.
+- **Watcher** — monitors CI on open PRs, reports failures back to workers.
+
+A project starts small: the orchestrator hosts the librarian and researcher itself, workers watch their own CI, and there are no other agents. When the project grows, the orchestrator proposes giving a role its own agent and you decide. Workers signal the same role names either way.
 
 ## How agents communicate
 
@@ -44,7 +46,7 @@ project start APP-1234 "User Auth Migration"
 
 This creates a Herdr workspace, starts a Claude orchestrator agent, and tells it to run `/start-project APP-1234`. Switch to the new workspace to interact with it.
 
-**Option 2: Guided tour.** An interactive walkthrough that spawns a researcher, librarian, and one worker. You drive each step by talking to agents in their panes — one automatic signal chain fires so you can see the handoff:
+**Option 2: Guided tour.** An interactive walkthrough that starts small (one worker, the orchestrator hosting the other roles), then offers to promote the researcher and librarian. You drive each step by talking to agents in their panes — one automatic signal chain fires so you can see the handoff:
 
 ```
 /start-project DEMO-001

@@ -23,6 +23,16 @@ Every event is sent **once**, to **one role**. Never the same information to sev
 
 The guided tour (`DEMO-`) shows this: it starts small with only workers, and the orchestrator hosting the rest. Then it asks whether to scale up, and promotes the librarian and researcher live.
 
+## 0.11: start small, promote on need
+
+*Decided 2026-11-25. This replaces "Choosing at the start" below, which proposed asking up front.*
+
+1. **Every project starts small.** The orchestrator hosts librarian and researcher. The watcher is **unassigned**: no agent holds it, so whoever needs it does it themselves. The orchestrator states this in one line at its existing plan-confirmation question, e.g. "Starting small: I host librarian and researcher, and workers watch their own CI. I'll suggest adding an agent when it's needed." **Exception:** an epic with no tasks promotes a researcher right away to fill them in.
+2. **A host follows a short "When hosted" section, not the full role file.** `librarian.md`, `watcher.md` and `researcher.md` each get one. The orchestrator reads it the first time a `[to <role>]` message arrives. Internal hand-offs between roles it hosts become its own steps: no messages to itself (the CLI refuses them anyway), e.g. a hosted librarian doesn't send WATCH to a hosted watcher.
+3. **An unassigned role** (`project status <role>` → `unassigned`) means whoever needs it does it themselves, and nobody signals it: `project prompt <role>` fails at once with "<role> has no agent; do it yourself" instead of escalating NEED. While the watcher is unassigned, each worker watches its own PR's CI, and the librarian sends no WATCH. Spawning or promoting the role assigns it. Then the watcher watches every PR and reports failures to workers, as before.
+4. **Promotion is proposed, not automatic.** The orchestrator asks with AskUserQuestion and the user decides. Triggers: its context guard nudges it; 3 or more workers run at once, or merged diffs pile up; CI churn; a research question it can't answer cheaply.
+5. **To promote:** the host writes `$(project dir)/<role>.handoff.md` (what it knows *as that role*, separate from its orchestrator state), then runs `project promote <role> --task …` with a boot task that points at that file. A promoted role is never moved back to the host automatically.
+
 ## Choosing at the start
 
 Staffing is decided when the project starts (`/start-project <key>`), not with a flag:

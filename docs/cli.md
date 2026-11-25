@@ -14,15 +14,15 @@ Register this agent and signal READY to the orchestrator. Pane ID and session ID
 
 ### `project stop <role>`
 
-Stop an agent. Marks it as stopped in the state file but preserves its session ID, pane ID, and ticket history for later resume. On a hosted role it only un-hosts the role (the host is never stopped or closed); stopping a host also stops the roles it hosts.
+Stop an agent. Marks it as stopped in the state file but preserves its session ID, pane ID, and ticket history for later resume. On a hosted role it only un-hosts the role, which becomes `unassigned` (the host is never stopped or closed); stopping a host un-hosts the roles it hosts. A role that had its own agent stays `stopped`.
 
 ### `project host <role>`
 
-The calling agent takes on a role. The registry points the role at the caller's terminal, marked `hosted by <caller>`. Messages for the role arrive prefixed `[to <role>] `. Refused if the role has its own live agent or the caller is not registered. The orchestrator does this automatically for librarian, researcher and watcher when it runs `project register orchestrator`.
+The calling agent takes on a role. The registry points the role at the caller's terminal, marked `hosted by <caller>`. Messages for the role arrive prefixed `[to <role>] `. Refused if the role has its own live agent or the caller is not registered. The orchestrator does this automatically for librarian and researcher when it runs `project register orchestrator`. The watcher starts unassigned.
 
 ### `project promote <role> [spawn options] (--task … | --task-file PATH | --resume)`
 
-Give a hosted role its own agent: a `project spawn` seeded from the handoff the host wrote. The role's entry now points at the new agent; the host is never stopped or closed. Same options as `spawn`. `project spawn <role>` on a hosted role behaves the same.
+Give a hosted role its own agent: a `project spawn` seeded from the handoff the host wrote. The role's entry now points at the new agent; the host is never stopped or closed. Same options as `spawn`. `project spawn <role>` on a hosted role behaves the same. On an unassigned role, `promote` is just a `spawn` (no handoff needed): it assigns the role.
 
 ### `project next-worker`
 
@@ -34,11 +34,11 @@ Track a ticket assignment to a worker. Supports multiple tickets per worker.
 
 ### `project prompt <role> <message> [--wait] [--timeout N]`
 
-Send a message to an agent. Fire-and-forget by default. `--wait` blocks until the agent finishes processing.
+Send a message to an agent. Fire-and-forget by default. `--wait` blocks until the agent finishes processing. To an unassigned role it fails at once (exit 1, `<role> has no agent — do it yourself`): nothing is sent or queued and the orchestrator is not told.
 
 ### `project ask <role> <question> [--timeout N] [--lines N]`
 
-Send a question, wait for the agent to finish, and print its response to stdout. Blocking.
+Send a question, wait for the agent to finish, and print its response to stdout. Blocking. An unassigned role fails like `prompt`.
 
 ### `project read <role> [--lines N]`
 
@@ -46,15 +46,15 @@ Read an agent's recent pane output. Non-blocking. Default: 40 lines.
 
 ### `project research <question>`
 
-Ask a domain question routed to the researcher agent. Async — the answer comes back via prompt.
+Ask a domain question routed to the researcher agent (the orchestrator if the researcher is unassigned or stopped). Async — the answer comes back via prompt.
 
 ### `project roster`
 
-Print the current role-to-pane-ID map. Hosted roles show the host's pane and `hosted by <host>`.
+Print the current role-to-pane-ID map. Hosted roles show the host's pane and `hosted by <host>`. Known roles (librarian, researcher, watcher) with no agent and no host show `unassigned`.
 
 ### `project status`
 
-Show agent states (idle, working, blocked) for all registered roles. A hosted role shows its host's state and `hosted by <host>`.
+Show agent states (idle, working, blocked) for all registered roles. A hosted role shows its host's state and `hosted by <host>`; an unassigned role shows `unassigned`. `project status <role>` prints the one word `unassigned` for it.
 
 ### `project info`
 
@@ -105,4 +105,4 @@ Read-only snapshot of the project: agents and their status, recent signals, acti
 
 Messages sent with `project prompt` are automatically prefixed with `FROM(<sender>):` so every agent knows who's talking. Messages without a prefix came from a human. A message for a role the receiver only *hosts* starts with `[to <role>] `, so the host knows which role's rules apply. An agent that messages a role it hosts itself is refused: it is that role.
 
-When an agent messages a stopped agent, the CLI auto-escalates to the orchestrator with a `NEED` signal — the orchestrator decides whether to bring it back.
+`unassigned` means the role has never had an agent, or was hosted and un-hosted: whoever needs it does it themselves. When an agent messages a stopped agent, the CLI auto-escalates to the orchestrator with a `NEED` signal — the orchestrator decides whether to bring it back.

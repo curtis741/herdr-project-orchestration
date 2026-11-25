@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0
+
+- **Projects start small.** At startup the orchestrator hosts librarian and researcher. No support agents are spawned. It says so in one line when it confirms the plan. Exception: an epic with no tasks gets a researcher right away to fill them in.
+- **Unassigned roles.** The watcher starts with no agent. `project status watcher` prints `unassigned`. `project prompt` to an unassigned role fails at once with "<role> has no agent — do it yourself", with no NEED escalation. Until the watcher has its own agent, workers watch their own PR's CI and the librarian sends no WATCH.
+- **Promotion is proposed, not automatic.** The orchestrator suggests giving a role its own agent (AskUserQuestion) when its context gets heavy, 3 or more workers run at once, merged diffs pile up, CI churns, or a research question is expensive. On yes, it writes `$(project dir)/<role>.handoff.md` and runs `project promote <role>`. A promoted agent reads the handoff first.
+- **When hosted.** `librarian.md` and `researcher.md` have a short section the orchestrator follows when a `[to <role>]` message arrives. Steps between roles it hosts become its own steps, never messages to itself.
+
 ## 0.10.1
 
 - **Role hosting.** The orchestrator hosts librarian, researcher and watcher until a role gets its own agent. `project host <role>` takes a role, and `project promote <role> --task …` moves it to a dedicated agent without closing the host. `project spawn` on a hosted role promotes it. A message delivered to a host starts with `[to <role>]`, so you know which role's rules apply. Senders don't change: always signal the role.

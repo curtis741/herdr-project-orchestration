@@ -108,7 +108,7 @@ Commands:
   rename <role> <label>            Rename a role's tab
   register <role>                   Register this agent and signal READY to orchestrator
   stop <role> [--close]            Stop an agent (preserves session ID); --close also closes its pane.
-                                   A hosted role is just un-hosted; the host is never stopped or closed
+                                   A hosted role is just un-hosted (unassigned); the host is never stopped or closed
   next-worker                      Print the next unused worker name (NATO alphabet, then alpha2...)
   assign <role> <ticket-key>       Track a ticket assignment to a worker
   prompt <role> <message>          Send a message (fire-and-forget)
@@ -118,7 +118,7 @@ Commands:
                                    Send, wait, read and print the reply (blocking)
   read <role> [--lines N]          Read an agent's recent pane output (non-blocking)
   roster                           Print the current role → pane ID map
-  status [role]                    Agent states for all roles, or one word (working|idle|blocked|done|stopped|unreachable) for a role
+  status [role]                    Agent states for all roles, or one word (working|idle|blocked|done|stopped|unassigned|unreachable) for a role
   info                             Print epic key and workspace ID (JSON)
   name                             Print the current project's key; exit 1 if there is none
   research <question>               Ask a research question (async, answer comes back via prompt)
@@ -287,13 +287,35 @@ refuse_self_hosted() {
 }
 
 HOSTABLE_ROLES=(librarian researcher watcher)
+# Hosted by the orchestrator at register time. The watcher is left out: it starts unassigned.
+DEFAULT_HOSTED_ROLES=(librarian researcher)
+# Roles that always exist as names, even with no state-file entry.
+KNOWN_ROLES=(librarian researcher watcher)
+
+# "Unassigned": a known role (fixed name, or one the state file has seen) with no agent
+# and no host. Represented as no state-file entry — un-hosting deletes the entry.
+is_unassigned() {
+  local f="$1" role="$2" r
+  [[ -n "$(read_pane "$f" "$role")" ]] && return 1
+  for r in "${KNOWN_ROLES[@]}"; do [[ "$r" == "$role" ]] && return 0; done
+  return 1
+}
+
+# Refuse (exit 1, nothing queued, no NEED) to message an unassigned role.
+refuse_unassigned() {
+  local f="$1" role="$2" caller="$3" detail="$4"
+  is_unassigned "$f" "$role" || return 0
+  echo "$role has no agent — do it yourself" >&2
+  log_signal "${caller:-unknown}" "$role" "UNASSIGNED" "$role has no agent — not sent. $detail"
+  exit 1
+}
 
 # Make <host> (at <pane>) host every default role that has no live agent of its own.
 # Roles already hosted by <host> follow it to <pane>. Roles with their own live agent,
 # or hosted by someone else, are left alone. History keys (session ids etc.) stay.
 _host_defaults() {
   local f="$1" host="$2" pane="$3" r tmp
-  for r in "${HOSTABLE_ROLES[@]}"; do
+  for r in "${DEFAULT_HOSTED_ROLES[@]}"; do
     tmp="${f}.tmp.$$"
     jq --arg r "$r" --arg host "$host" --arg pane "$pane" \
       '(.agents[$r] // {}) as $e
@@ -484,11 +506,9 @@ cmd_stop() {
   host="$(read_host "$role" "$f")"
   tmp="${f}.tmp.$$"
   if [[ -n "$host" ]]; then
-    jq --arg role "$role" \
-      '.agents[$role] |= (del(.hosted_by, .hosted_at) + {stopped: true, stopped_at: (now | todate)})' \
-      "$f" > "$tmp" && mv "$tmp" "$f"
-    log_signal "orchestrator" "$role" "STOP" "$role un-hosted (was hosted by $host)"
-    echo "stopped: $role (was hosted by $host; the host keeps running)"
+    jq --arg role "$role" 'del(.agents[$role])' "$f" > "$tmp" && mv "$tmp" "$f"
+    log_signal "orchestrator" "$role" "STOP" "$role un-hosted (was hosted by $host) — now unassigned"
+    echo "stopped: $role (was hosted by $host; now unassigned, the host keeps running)"
     return 0
   fi
 
@@ -499,10 +519,8 @@ cmd_stop() {
   jq --arg role "$role" --arg sid "$sid" \
     '.agents[$role].stopped = true | if $sid != "" then .agents[$role].session_id = $sid else . end | .agents[$role].stopped_at = (now | todate)
      | del(.agents[$role].spinoff)
-     # roles this agent hosted lose their host with it
-     | .agents |= with_entries(if (.value.hosted_by // "") == $role
-                               then .value |= (del(.hosted_by, .hosted_at) + {stopped: true, stopped_at: (now | todate)})
-                               else . end)' \
+     # roles this agent hosted lose their host with it: they become unassigned
+     | .agents |= with_entries(select((.value.hosted_by // "") != $role))' \
     "$f" > "$tmp" && mv "$tmp" "$f"
   log_signal "orchestrator" "$role" "STOP" "$role stopped"
   if $close; then
@@ -566,14 +584,14 @@ cmd_prompt() {
   f="$(ensure_state)"
   local pane
   pane="$(read_pane "$f" "$role")"
+  local caller
+  caller="$(resolve_caller "$f")"
+  refuse_unassigned "$f" "$role" "$caller" "Original: $message"
   if [[ -z "$pane" ]]; then
     echo "error: role '$role' not registered — run 'project register $role <pane-id>'" >&2
     jq -r '.agents | keys[]' "$f" >&2
     exit 1
   fi
-
-  local caller
-  caller="$(resolve_caller "$f")"
 
   local is_stopped
   is_stopped=$(jq -r --arg role "$role" '.agents[$role].stopped // false' "$f")
@@ -713,13 +731,13 @@ cmd_ask() {
   f="$(ensure_state)"
   local pane
   pane="$(read_pane "$f" "$role")"
+  local caller
+  caller="$(resolve_caller "$f")"
+  refuse_unassigned "$f" "$role" "$caller" "Original question: $message"
   if [[ -z "$pane" ]]; then
     echo "error: role '$role' not registered" >&2
     exit 1
   fi
-
-  local caller
-  caller="$(resolve_caller "$f")"
 
   local is_stopped
   is_stopped=$(jq -r --arg role "$role" '.agents[$role].stopped // false' "$f")
@@ -786,6 +804,15 @@ cmd_read() {
   read_trimmed "$pane" "$lines"
 }
 
+# One row per known role with no agent and no host.
+_print_unassigned() {
+  local f="$1" r
+  for r in "${KNOWN_ROLES[@]}"; do
+    is_unassigned "$f" "$r" && printf "  %-12s %-10s %s\n" "$r" "-" "unassigned"
+  done
+  return 0
+}
+
 cmd_roster() {
   local f
   f="$(ensure_state)"
@@ -803,6 +830,7 @@ cmd_roster() {
         (.value.current_ticket // null)
       ] | map(select(. != null)) | join(", ") | if . == "" then "-" else . end
     )"' "$f" | column -t -s $'\t'
+  _print_unassigned "$f"
 }
 
 cmd_status() {
@@ -815,6 +843,9 @@ cmd_status() {
       echo "stopped"; return 0
     fi
     one_pane="$(read_pane "$f" "$one")"
+    if is_unassigned "$f" "$one"; then
+      echo "unassigned"; return 0
+    fi
     if [[ -z "$one_pane" ]]; then
       echo "error: role '$one' not registered" >&2
       exit 1
@@ -856,6 +887,7 @@ cmd_status() {
       printf "  %-12s %-10s %s\n" "$role" "$pane" "$status"
     fi
   done
+  _print_unassigned "$f"
 }
 
 cmd_info() {
@@ -2320,6 +2352,11 @@ cmd_promote() {
   local f host
   f="$(ensure_state)"
   host="$(read_host "$role" "$f")"
+  # Unassigned: nothing to hand off; promoting just assigns it (a plain spawn).
+  if [[ -z "$host" ]] && is_unassigned "$f" "$role"; then
+    cmd_spawn "$@"
+    return
+  fi
   if [[ -z "$host" ]]; then
     echo "error: role '$role' is not hosted — nothing to promote (use 'project spawn $role')" >&2
     exit 1

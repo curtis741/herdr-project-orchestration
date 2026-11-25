@@ -25,7 +25,7 @@ If your boot prompt says you're a **spinoff worker**, you were spawned by `proje
 - **No tracker work:** skip STARTING and make no ticket transitions. Your PR references the project's epic key (title prefix and description). If the brief says to do something else (a specific ticket, no PR), follow the brief.
 - **Stay in scope:** fix exactly what the brief describes. If the fix turns out much bigger than the brief suggests, or the brief is wrong, don't expand it. `project punt` what you found and finish with `spinoff-done`.
 - **Questions:** don't go back to the requester. They handed this off so they wouldn't have to carry it. Ask the librarian or researcher like any worker.
-- **COMPLETE:** same as Step 9, to the librarian, using your spinoff ID as the ticket key (`COMPLETE — PR #N for spinoff-bravo`). Then wait. The watcher reports CI failures to you, and the librarian tells you when the PR merges.
+- **COMPLETE:** same as Step 9, to the librarian, using your spinoff ID as the ticket key (`COMPLETE — PR #N for spinoff-bravo`). Then wait. CI failures reach you from the watcher (or you watch your own PR, see § Asking for help), and the librarian tells you when the PR merges.
 - **Finish:** your last command, once the PR has merged (or right away if nothing needed changing or you punted):
   ```bash
   project spinoff-done "<one-line outcome: PR #N merged / no-op: <why> / punted: <why>>"
@@ -208,7 +208,7 @@ After the PR is open, signal the librarian. Include operational notes (what you 
 project prompt librarian "COMPLETE — PR #<number> for <ticket-key>. <operational notes: migration timing, environment quirks, fragile steps>. Test brief: <if applicable, otherwise omit>"
 ```
 
-The librarian transitions the ticket to In Code Review, starts CI watching, and relays to the orchestrator. Don't signal the orchestrator directly.
+The librarian transitions the ticket to In Code Review, starts CI watching (when the watcher has its own agent; otherwise see § Asking for help, CI is failing), and relays to the orchestrator. Don't signal the orchestrator directly.
 
 For follow-up PRs (fixes after merge, second pass), send another `COMPLETE` with the new PR number.
 
@@ -232,7 +232,7 @@ Use `project prompt <role> <message>` to message any agent directly — don't ju
 - **"I need to know this"** — a domain question you need answered to continue (data schemas, external APIs, protocol mechanics): `project research "..."` — async, non-blocking. The answer comes back as a prompt to you when it's ready. Keep working on what you can in the meantime.
 - **"I think we have a problem here"** — something looks wrong or missing but isn't yours to solve (a gap in another system, a missing upstream dependency, a suspected bug outside your ticket): `project punt "<problem + what you saw>"`. The researcher owns it from there — it investigates and acts (ticket, orchestrator, user). Nothing comes back to you unless it changes your ticket. Don't relay its findings to the user yourself.
 - **Blocked on a decision:** `project prompt orchestrator "BLOCKED — <reason>"` — it escalates to the user.
-- **CI is failing:** The watcher monitors your PRs and reports CI failures to you directly. Fix the issue, push, and the watcher will recheck. If the watcher hasn't reported a failure but you notice one, fix and push — the watcher will pick up the new status.
+- **CI is failing:** Run `project status watcher`. If it says `unassigned`, the watcher has no agent yet: watch your own PR's CI after `COMPLETE` (check periodically, e.g. with `ScheduleWakeup`) and fix failures yourself. Once the watcher has its own agent, it monitors your PRs and reports failures to you directly. Fix, push, and it rechecks. Either way, if you notice a failure no one reported, fix and push.
 - **Related work you discover:** Use judgment based on PR blast radius. A small fix that unblocks your ticket (adding a gem, fixing a broken helper) — just do it, mention it in the PR. A separate unit of work that would double the diff (moving controllers, refactoring a shared service) — `project prompt orchestrator "SCOPE — <explanation>"` and let it route the work to a follow-up ticket or another worker.
 - **A scoped problem outside your ticket that just needs fixing** (you know what's wrong and roughly where, and it isn't worth a ticket): spin it off instead of carrying it. See § Spinning off a fix.
 

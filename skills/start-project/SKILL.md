@@ -1,6 +1,6 @@
 ---
 name: start-project
-description: "Orchestrate a project across multiple Herdr worker agents. Reads the project's tickets, builds a dependency DAG, spawns worker agents in tabs (one per ticket, worktree inside repo dir), and tracks progress wave by wave. Also spawns a librarian agent that ingests merged diffs so later workers can ask about earlier work. Use when the user says 'start project', 'start epic', 'work on epic APP-XXXX', 'orchestrate this epic', or 'spin up workers for this epic'. Requires Herdr."
+description: "Orchestrate a project across multiple Herdr worker agents. Reads the project's tickets, builds a dependency DAG, spawns worker agents in tabs (one per ticket, worktree inside repo dir), and tracks progress wave by wave. Starts small: the orchestrator hosts the librarian (merged diffs) and researcher itself, workers watch their own CI, and a role gets its own agent when the project needs it. Use when the user says 'start project', 'start epic', 'work on epic APP-XXXX', 'orchestrate this epic', or 'spin up workers for this epic'. Requires Herdr."
 ---
 
 # start-project — Project Orchestrator
@@ -57,9 +57,13 @@ Repo mapping:
   APP-1005: frontend/
 ```
 
-**Spikes / research tickets:** If the project already has populated child tickets (descriptions, dependency links), skip the research phase — the spike is done. Exclude spike tickets from the DAG and note them as already resolved in the plan. If the project has open discovery questions (listed in the description or spike comments), spawn a lightweight research agent alongside wave 1. The research agent closes its own spike ticket when its work is done — the orchestrator doesn't manage that transition.
+**Spikes / research tickets:** If the project already has populated child tickets (descriptions, dependency links), skip the research phase — the spike is done. Exclude spike tickets from the DAG and note them as already resolved in the plan. Open discovery questions (listed in the description or spike comments) go to the researcher role, which you host until it's promoted (§ Promotion). The researcher closes its own spike ticket when its work is done — the orchestrator doesn't manage that transition.
+
+**No tasks:** if the epic has no child tickets, there's no DAG yet. Promote a researcher immediately to fill them in (§ Promotion, no separate question), and say so in the staffing line.
 
 Use `AskUserQuestion` to confirm the plan — present the key decisions (wave grouping, dependency order, repo mapping) as concrete options the user can approve or redirect. Don't present a wall of text and ask "looks good?" — structure the decision points.
+
+Put the staffing in one line in that question's lead text: "Starting small: I host librarian and researcher, and workers watch their own CI. I'll suggest adding an agent when it's needed." For a no-tasks epic: "No tasks yet, so I'll promote a researcher now to fill them in; I host the librarian, and workers watch their own CI."
 
 ## Step 2: Determine repo mapping
 
@@ -75,7 +79,7 @@ If you can't determine the repo from labels, ask the user.
 
 ## Step 3: Create the project workspace and initialize
 
-One workspace holds everything for this project — the orchestrator, librarian, and workers. You address every agent by role; you never handle pane, tab, or workspace IDs.
+One workspace holds everything for this project — the orchestrator, workers, and any role that has been promoted to its own agent. You address every agent by role; you never handle pane, tab, or workspace IDs.
 
 First, check if a project is already initialized:
 
@@ -114,29 +118,58 @@ Three commands, each with different blocking behavior:
 
 - **Boot prompts** use `--wait` because the assignment must not arrive before the agent is listening. These are short waits (READY comes in seconds).
 - **Assignments and lifecycle signals** use plain `prompt` — the worker signals back (STARTING, COMPLETE, BLOCKED) when it has something to report.
-- **Librarian/researcher queries** use `ask` when you need the answer to choose the next action (worker reuse, unblock decisions).
+- **Librarian/researcher queries** use `ask` when you need the answer to choose the next action (worker reuse, unblock decisions). Only for a role that has its own agent; for one you host, answer from what you hold.
 
 **Anti-pattern: blocking on worker execution.** Never `--wait` on a worker assignment. The worker may take 10+ minutes to implement its ticket — during that time you can't respond to other workers, the user, or the librarian. Send the assignment with plain `prompt` and move on to the next worker or back to monitoring.
 
-Setup-phase `--wait` on support agent assignments (librarian, watcher, researcher) is fine — it's sequential initialization before the orchestrator enters its monitoring loop.
+`--wait` on a promoted role's boot and payload is fine — it's short, sequential initialization.
 
-### Spawn the librarian
+### Roles start hosted
 
-Spawn the librarian in the project workspace with a minimal identity prompt as its first task (the first task goes in the spawn, not a later prompt). `project register` writes the state file and signals READY to you automatically:
+`project register orchestrator` (above) makes you the host of the librarian and researcher. Nothing is spawned for them at startup, so senders never change. The watcher is **unassigned**: no agent holds it (`project status watcher` → `unassigned`).
+
+- A message for a role you host arrives as `[to <role>] FROM(<sender>): …`. The first time one arrives for a role, read that role's **When hosted** section in `~/.claude/skills/start-project/<role>.md` (only that section) and follow it for every message to that role.
+- Hand-offs between roles you host are your own steps. Don't message a role you host: the CLI refuses it (`error: you host '<role>' yourself`). Wherever this skill says to prompt or ask the librarian or researcher, do that role's work yourself until the role has its own agent.
+- Nobody signals an unassigned role: `project prompt watcher …` fails at once (`has no agent — do it yourself`). Until the watcher has its own agent, each worker watches its own PR's CI, and the librarian sends no WATCH.
+
+If the epic had no tasks, promote the researcher now (§ Promotion), wait for its new-ticket report, then rebuild the DAG (Step 1) and continue at Step 3a.
+
+## Promotion
+
+A role gets its own agent only when you propose it and the user agrees (the no-tasks researcher is the exception: the plan confirmation already named it). Propose when:
+
+- Your context guard nudges you
+- 3 or more workers run at once, or merged diffs pile up → librarian
+- CI churn fills your context → watcher
+- A research question you can't answer cheaply → researcher
+
+Ask with `AskUserQuestion`: one role, the trigger in one line, options **Promote the <role>** · **Not yet** · **What changes?** (answer: it gets its own agent seeded from what I know as that role; senders keep using the same role name; I drop its context; it isn't moved back). Don't promote on your own.
+
+On yes:
+
+1. **Write the handoff** to `$(project dir)/<role>.handoff.md`: what you know *as that role*, kept apart from your orchestrator state. Librarian: ticket states, merged-PR summaries, DAG. Watcher: PRs on the watch list, last CI state. Researcher: findings so far, open questions (research.md already holds the durable part; point to it). Link instead of restating.
+2. **Promote** with a boot task that points at the file (below). The watcher isn't hosted, so there's nothing to promote: assign it with `project spawn watcher …` (same boot task), and make its handoff the open PRs and the workers' roles; tell workers they can stop watching their own CI. Your terminal is never closed and you keep hosting the other roles. Promotion isn't undone automatically.
+3. When the role reports READY, send its payload (below).
+4. **Stop acting as that role.** Its messages now go to the new agent; drop what you carried for it from your context.
+
+Each `project promote` takes the same options as `project spawn`. The boot task:
 
 ```bash
-project spawn librarian --cwd "$PWD" --label librarian --title librarian --wait --timeout 60000 --task - <<'EOF'
-Project librarian.
+project promote <role> --cwd "$PWD" --label <role> --title <role> --wait --timeout 60000 --task - <<EOF
+Project <role>.
 
-All agents use 'project prompt <role> <message>' to communicate. Your role is 'librarian'.
+All agents use 'project prompt <role> <message>' to communicate. Your role is '<role>'.
 
 Boot sequence:
-1. Run: project register librarian
-2. Wait for your assignment.
+1. Run: project register <role>
+2. Read $(project dir)/<role>.handoff.md — what the orchestrator knew as <role> before you. Trust it; don't re-verify it against the tracker or GitHub.
+3. Wait for your assignment.
 EOF
 ```
 
-When the librarian reports READY, send its full role payload:
+(For an immediate researcher on an epic with no tasks there's no handoff: drop step 2 and put the epic in the payload.)
+
+### Librarian payload
 
 ```bash
 project prompt librarian "Your assignment:
@@ -149,26 +182,14 @@ Dependency DAG:
   APP-1003 (wave 2, blocked by APP-1001)
   APP-1004 (wave 3, blocked by APP-1003)
 
+Handoff: $(project dir)/librarian.handoff.md (read it first).
+
 Your role is defined in ~/.claude/skills/start-project/librarian.md — read it now and follow it." --wait --timeout 120000
 ```
 
-### Spawn watcher
+### Watcher payload
 
-The watcher monitors CI on all worker PRs and reports failures directly to workers. Spawn it alongside the librarian — it's long-lived, one per project.
-
-```bash
-project spawn watcher --cwd "$PWD" --label watcher --title watcher --wait --timeout 60000 --task - <<'EOF'
-Project watcher.
-
-All agents use 'project prompt <role> <message>' to communicate. Your role is 'watcher'.
-
-Boot sequence:
-1. Run: project register watcher
-2. Wait for your assignment.
-EOF
-```
-
-When the watcher reports READY, send its role payload:
+The watcher monitors CI on all worker PRs and reports failures directly to workers. Long-lived, one per project.
 
 ```bash
 project prompt watcher "Your assignment:
@@ -176,28 +197,14 @@ project prompt watcher "Your assignment:
 Epic: APP-XXXX
 Repo: <owner/repo>
 
+Handoff: $(project dir)/watcher.handoff.md (read it first).
+
 Your role is defined in ~/.claude/skills/start-project/watcher.md — read it now and follow it." --wait --timeout 60000
 ```
 
-### Spawn researcher (if needed)
+### Researcher payload
 
-If the project has open discovery questions (noted in the description, spike comments, or your own judgment), spawn a long-lived researcher alongside wave 1. Skip this if the project is well-understood.
-
-Spawn the researcher with a minimal identity prompt:
-
-```bash
-project spawn researcher --cwd "$PWD" --label researcher --title researcher --wait --timeout 60000 --task - <<'EOF'
-Project researcher.
-
-All agents use 'project prompt <role> <message>' to communicate. Your role is 'researcher'.
-
-Boot sequence:
-1. Run: project register researcher
-2. Wait for your assignment.
-EOF
-```
-
-When the researcher reports READY, send its full role payload. Include the research.md path and whether to start with discovery or resume from existing findings:
+Include the research.md path and whether to start with discovery or resume from existing findings:
 
 ```bash
 project prompt researcher "Your assignment:
@@ -212,27 +219,16 @@ Open questions to investigate:
 
 Phase: discovery (no prior research.md exists)
 
-Your role is defined in ~/.claude/skills/start-project/researcher.md — read it now and follow it." --wait --timeout 120000
-```
-
-If research.md already exists (e.g. after a researcher restart), tell the researcher to resume:
-
-```bash
-project prompt researcher "Your assignment:
-
-Epic: APP-XXXX
-Summary: <epic summary>
-
-Research artifact: ~/.herdr/projects/<project-name>/research.md (exists — load it)
-
-Phase: ongoing (resume from existing research.md)
+Handoff: $(project dir)/researcher.handoff.md (read it first; none for an epic with no tasks).
 
 Your role is defined in ~/.claude/skills/start-project/researcher.md — read it now and follow it." --wait --timeout 120000
 ```
 
-### Restart the researcher
+If research.md already exists, use `Research artifact: … (exists — load it)` and `Phase: ongoing (resume from existing research.md)`.
 
-When the researcher's context is degraded (slow responses, losing track of findings, deep in a rabbit hole), restart it cleanly. The durable research.md means no findings are lost:
+### Restart a promoted researcher
+
+When its context is degraded (slow responses, losing track of findings, deep in a rabbit hole), restart it cleanly. The durable research.md means no findings are lost:
 
 ```bash
 project stop researcher --close
@@ -247,7 +243,7 @@ Boot sequence:
 EOF
 ```
 
-Then send the resume payload above (Phase: ongoing). The researcher loads research.md and picks up where it left off. Don't use `--resume` for a degraded researcher — the point of restarting is to shed the bloated context.
+Then send the researcher payload with the `Phase: ongoing` form. Don't use `--resume` for a degraded researcher — the point of restarting is to shed the bloated context.
 
 ## Step 3a: Clean up stale worktrees
 
@@ -331,15 +327,15 @@ Workers message you directly when they finish, hit a blocker, or find scope cree
 project status
 ```
 
-When the librarian relays a `COMPLETE` signal for a worker (or the worker reaches `idle`):
+Once the librarian has its own agent it relays `COMPLETE`/`DONE` to you in compact form. Until then the worker's signal arrives as `[to librarian] …` and you handle it as the librarian (its **When hosted** section); the relay is your own step. When a `COMPLETE` for a worker is relayed or handled this way (or the worker reaches `idle`):
 
 1. Verify a draft PR was opened (check via GitHub MCP)
 2. Notify the user: `[start-project] APP-1001 — PR #XXXX opened`
 3. **If the librarian's relay includes a test brief** (API or parity migration work), spawn a tester — see Step 5a
 
-The watcher handles CI monitoring — the librarian already told it to watch the PR. You don't need to manage CI checks.
+CI: once the watcher has its own agent it handles monitoring (the librarian tells it to watch each PR). While `project status watcher` says `unassigned`, each worker watches its own PR's CI. Either way you don't manage CI checks.
 
-When the librarian relays a `DONE` signal (post-merge verification complete), notify the user: `[start-project] APP-1001 verified in production — done.`
+When a `DONE` signal (post-merge verification complete) is relayed or handled as above, notify the user: `[start-project] APP-1001 verified in production — done.`
 
 ### Spinoffs
 
@@ -434,7 +430,7 @@ The tester and worker handle the fix-verify cycle between themselves. The tester
 
 When a worker's PR is **merged** (check via GitHub MCP — the user may merge manually or tell you):
 
-1. Tell the librarian to ingest the diff:
+1. Have the librarian ingest the diff (if you host the librarian, do it yourself per its When hosted section):
    ```bash
    project prompt librarian "APP-1001 PR #XXXX was just merged to main. Read the diff and summarize what changed — focus on new interfaces, changed files, and patterns other workers need to know about." --wait --timeout 120000
    ```
@@ -506,13 +502,13 @@ project spawn <worker-name> --resume --cwd <repo_path> --label "<worker-name> �
 
 `--resume` uses the stored session. The worker re-registers itself on boot.
 
-This applies to workers and testers. The librarian and researcher stay up for the life of the epic — both accumulate context that's expensive to rebuild (merged diffs for the librarian, domain knowledge for the researcher). An idle researcher is in its correct steady state, not a candidate for shutdown.
+This applies to workers and testers. A promoted librarian or researcher stays up for the life of the epic — both accumulate context that's expensive to rebuild (merged diffs for the librarian, domain knowledge for the researcher). An idle researcher is in its correct steady state, not a candidate for shutdown.
 
 ## Step 7: Completion
 
 When the librarian sends `PROJECT_COMPLETE` (all tickets done, all PRs merged):
 
-1. Ask the librarian for a final summary:
+1. Get a final summary from the librarian (if you host it, write it from what you hold):
    ```bash
    project ask librarian "Summarize the full scope of changes across all PRs for the project."
    ```
@@ -526,7 +522,7 @@ When the librarian sends `PROJECT_COMPLETE` (all tickets done, all PRs merged):
    - N tickets implemented
    - N PRs merged
    - Worktrees cleaned up
-   - Librarian has the full change summary if you need it
+   - The librarian has the full change summary if you need it
    ```
 
 **Do NOT close the workspace or shut down agents automatically.** The user may want to ask the librarian questions, review summaries, or inspect the state. Ask the user if they're ready to shut down. Only close the workspace when they confirm.
@@ -558,13 +554,13 @@ From these four sources, reconstruct: which wave, which tasks done/in-progress/b
 
 2. **Register yourself:** `project register orchestrator`
 
-3. **Resume agents with session IDs** — priority order: librarian first (it has accumulated knowledge), then active workers:
+3. **Resume agents with session IDs** — roles that had their own agent first (librarian, it has accumulated knowledge), then active workers. Roles that were hosted by the old orchestrator come back hosted by you on register; their knowledge lived in that context, so rebuild it from the signal log, git and the tracker:
    ```bash
    project spawn <role> --resume --cwd "$PWD" --label "<role>" --title "<role>"   # workers: --label/--title "<role> — <ticket-key>" / "<role> — <focus>"
    ```
    Each agent self-registers on boot, which refreshes its entry in the state file.
 
-4. **Reconstruct project state** — once the librarian is back:
+4. **Reconstruct project state** — if the librarian has its own agent, once it's back:
    ```bash
    project ask librarian "Orchestrator rebooted. What's the current state of all tickets?"
    ```
@@ -617,7 +613,7 @@ Editing skill files mid-epic bloats your context and risks inconsistency across 
 ## What you do NOT do
 
 - Write implementation code
-- Research the codebase — delegate to the researcher or librarian. Don't grep code, read files, or verify scope yourself. If a worker or the user asks something outside your scope, forward it: `project prompt researcher` for domain questions, `project prompt librarian` for questions about merged work. Tell the asker you've forwarded it.
+- Research the codebase for your own decisions — ask the researcher or librarian. Don't grep code, read files, or verify scope yourself. If a worker or the user asks something outside your scope, forward it: `project prompt researcher` for domain questions, `project prompt librarian` for questions about merged work, and tell the asker. For a role you host, the message reaches you as `[to <role>]` and its When hosted section tells you how far to go; if it's more than that section covers, propose promotion.
 - Make architectural decisions — workers and the user handle those
 - Merge PRs — the user reviews and merges
 - Force-push or rewrite history

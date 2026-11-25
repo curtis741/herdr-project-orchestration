@@ -17,7 +17,7 @@ A scripted walkthrough of multi-agent orchestration. **Whoever needs the user as
 
 ## Shape of the tour
 
-1. **Small:** one worker, one task. You host librarian, researcher, watcher.
+1. **Small:** one worker, one task. You host librarian and researcher; the watcher is unassigned (workers watch their own CI).
 2. **Scale up (optional):** promote librarian and researcher, then research → `TASK_READY` → automatic worker spawn → done, with a second task.
 3. **Wrap-up.**
 
@@ -73,11 +73,11 @@ eval "$(project open demo --label "Guided Tour (DEMO)" --focus)"
 project register orchestrator
 ```
 
-`project register orchestrator` makes you host librarian, researcher and watcher.
+`project register orchestrator` makes you host librarian and researcher. The watcher stays unassigned.
 
 ## Stage 1: Start small
 
-Lead text, one or two lines: "Welcome — a short tour. We start small, like a typical 2–4 ticket project: only workers. I host the librarian role (and researcher/watcher) myself, so my context stays light. When an agent needs you, it asks in its own tab."
+Lead text, one or two lines: "Welcome — a short tour. We start small, like a typical 2–4 ticket project: only workers. I host the librarian and researcher roles myself, and workers watch their own CI, so my context stays light. When an agent needs you, it asks in its own tab."
 
 Spawn the worker for DEMO-TASK-001 right away:
 

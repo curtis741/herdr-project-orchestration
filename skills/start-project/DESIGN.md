@@ -18,12 +18,14 @@ Three skills, global (`~/.claude/skills/`):
 
 ## Agent interaction model
 
+Every project starts small: the orchestrator hosts the librarian and researcher, the watcher is unassigned (workers watch their own CI), and workers are the only other agents. A role gets its own agent by promotion, when the project needs it (below). The diagram is the full split, with every role promoted.
+
 ```
-Project Workspace (one workspace per project, all roles as tabs)
-  ├── Orchestrator tab (repo root)
-  ├── Librarian tab (repo root, stays on main)
-  ├── Watcher tab (repo root, stays on main)
-  ├── Researcher tab (repo root, stays on main, optional)
+Project Workspace (one workspace per project, all agents as tabs)
+  ├── Orchestrator tab (repo root; hosts every role until it is promoted)
+  ├── Librarian tab (repo root, stays on main; once promoted)
+  ├── Watcher tab (repo root, stays on main; once promoted)
+  ├── Researcher tab (repo root, stays on main; once promoted)
   ├── Worker A tab (repo root, cds into .worktrees/<ticket-a>/)
   ├── Worker B tab (repo root, cds into .worktrees/<ticket-b>/)
   └── Worker C tab (repo root, cds into .worktrees/<ticket-c>/)
@@ -48,6 +50,17 @@ Orchestrator ──spawns──> Tester (when worker provides test brief)
 Tester ──findings──> Orchestrator ──"fix these"──> Worker
 ```
 
+### Small by default, promotion by need
+
+A role is an address and an agent is a host; one agent can host several roles (details in `docs/mode.md`). Senders never change: workers always signal `librarian` or `researcher`, and the CLI resolves the role to its current host. `project register orchestrator` makes the orchestrator host librarian and researcher, so nothing is spawned for them at startup.
+
+- **Hosting.** A message for a hosted role arrives as `[to <role>] FROM(<sender>): …`. The first time one arrives, the orchestrator reads that role's **When hosted** section (in `librarian.md` / `watcher.md` / `researcher.md`), a condensed rule set, not the full role file. Hand-offs between hosted roles are the orchestrator's own steps; the CLI refuses a host messaging its own role, so no signal is ever sent to itself. In the diagram above, a hosted librarian's relay to the orchestrator is not a message.
+- **Unassigned watcher.** No agent holds the watcher at boot: `project status watcher` prints `unassigned` and `project prompt watcher` fails at once (`has no agent — do it yourself`), with no NEED escalation. Until the watcher has its own agent, each worker watches its own PR's CI and the librarian sends no WATCH. Spawning it assigns the role; then it watches every PR as before.
+- **Promotion is proposed, never automatic.** The orchestrator asks with `AskUserQuestion` when its context guard nudges it, when 3 or more workers run at once or merged diffs pile up (librarian), on CI churn (watcher), or on a research question it can't answer cheaply (researcher). On yes it writes `$(project dir)/<role>.handoff.md` (what it knows as that role, apart from its orchestrator state), runs `project promote <role> --task …` with a boot task that points at the file, and stops acting as that role. A promoted role is not moved back automatically.
+- **Exception: no tasks.** An epic with no child tickets promotes a researcher immediately to fill them in.
+
+Why: a small project doesn't pay for three idle long-lived agents, and a large one doesn't overload the orchestrator. Promotion by need sizes the staffing to the load instead of guessing at the start. The procedure is in `start-project/SKILL.md` § Promotion.
+
 ## Communication protocol
 
 Two commands via the `project` CLI (`~/.local/bin/project`), which resolves roles to terminals from a shared state file. Agents address each other by role only: no agent names to hallucinate, no pane IDs or agent lists to parse.
@@ -70,7 +83,7 @@ Examples:
 |---------|-------|-----|
 | DAG building, wave sequencing, spawning | Orchestrator | Lightweight coordination |
 | Implementation, tests, PRs | Workers | Full codebase context |
-| Merged diff summaries, answering cross-worker questions | Librarian | Single source of truth |
+| Merged diff summaries, answering cross-worker questions | Librarian | Single source of truth (hosted by the orchestrator until promoted) |
 | Ticket transitions | Librarian | Receives lifecycle signals, knows when work starts/completes |
 | DAG monitoring, auto-unblock detection | Librarian | Sees merged signals, checks dependency graph, signals orchestrator |
 | PR/ticket status queries | Librarian | Tracks all state; orchestrator asks rather than querying GitHub |
@@ -151,7 +164,7 @@ The orchestrator builds the initial DAG from the ticket tracker and spawns worke
 
 ### Orchestrator does not research
 
-The orchestrator stays lightweight: it reads the ticket tracker, manages the DAG, and spawns agents. It never greps the codebase, reads implementation files, or verifies whether work is done by inspecting code. When it needs that information, it asks the librarian (for merged work) or the researcher (for domain questions). On restart, it asks the librarian for ticket/PR status rather than querying GitHub directly.
+The orchestrator stays lightweight: it reads the ticket tracker, manages the DAG, and spawns agents. It never greps the codebase, reads implementation files, or verifies whether work is done by inspecting code. When it needs that information, it asks the librarian (for merged work) or the researcher (for domain questions). For a role it hosts, it answers only as far as that role's When hosted section goes and proposes promotion beyond that. On restart, it asks the librarian for ticket/PR status rather than querying GitHub directly.
 
 ## Known gaps
 
@@ -320,7 +333,7 @@ If defer:
 - **Signal economy** — every signal burns tokens in both sender and receiver. Route lifecycle events through one agent (the librarian) rather than fanning out. The orchestrator gets compact relays, not raw detail. The librarian only signals the orchestrator when it needs to act: `UNBLOCKED` (spawn workers) or `PROJECT_COMPLETE` (wrap up). Routine `DONE` signals are stored without relay.
 - Max 3 concurrent workers
 - Workers don't spawn sub-agents — escalate to orchestrator
-- Librarian, watcher, and researcher are long-lived — all stay up for the life of the project. Librarian and researcher are on-demand (idle is their correct steady state). The researcher can be cleanly restarted when context degrades — research.md carries forward. The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
+- The librarian and researcher are hosted by the orchestrator until promoted; the watcher is unassigned until spawned. Once a role has its own agent it is long-lived and stays up for the life of the project. Librarian and researcher are on-demand (idle is their correct steady state). The researcher can be cleanly restarted when context degrades — research.md carries forward. The watcher self-paces with `ScheduleWakeup` to poll CI on its watch list
 - Librarian ingests merged PRs and research findings
 - All PRs opened as drafts
 - Never force-push
